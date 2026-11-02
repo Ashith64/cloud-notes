@@ -1,5 +1,6 @@
 import os
 
+
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-prod")
     DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///dev.db")
@@ -11,3 +12,6 @@ class Config:
     ASG_NAME = os.environ.get("ASG_NAME", "")
     DB_INSTANCE_ID = os.environ.get("DB_INSTANCE_ID", "")
     APP_VERSION = "0.1.0"
+    # Allow tests to override TESTING without inheriting irrelevant config keys.
+    TESTING = False
+

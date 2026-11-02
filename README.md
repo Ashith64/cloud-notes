@@ -5,3 +5,4 @@ A polished student notes web app that runs on AWS. Notes are Markdown files (S3 
 ## Run locally
 
 *(To be filled later)*
+

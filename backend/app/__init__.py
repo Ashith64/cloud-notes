@@ -27,7 +27,13 @@ def create_app(config_class=Config):
     # Blueprints
     # ------------------------------------------------------------------
     from .routes.auth import auth_bp
+    from .routes.notes import notes_bp
+    from .routes.notebooks import notebooks_bp
+    from .routes.tags import tags_bp
     app.register_blueprint(auth_bp)
+    app.register_blueprint(notes_bp)
+    app.register_blueprint(notebooks_bp)
+    app.register_blueprint(tags_bp)
 
     # ------------------------------------------------------------------
     # Public routes
@@ -84,5 +90,54 @@ def create_app(config_class=Config):
         from .db import init_db
         init_db()
         click.echo("Database initialised.")
+
+    @app.cli.command("reindex")
+    def reindex_command():
+        """Rebuild notes index (title, snippet, search_text, tags) from stored files."""
+        import frontmatter as fm
+        from .models import Note, NoteTag, Tag
+        from .storage.factory import get_storage
+        from .utils import make_snippet, strip_markdown
+
+        db = app._db_session()
+        storage = get_storage(app)
+        notes = db.query(Note).all()
+        count = 0
+        for note in notes:
+            try:
+                raw = storage.get_text(note.storage_key)
+            except FileNotFoundError:
+                click.echo(f"  SKIP {note.id}: file not found at {note.storage_key}")
+                continue
+
+            post = fm.loads(raw)
+            note.title = post.metadata.get("title", "Untitled")
+            note.snippet = make_snippet(post.content)
+            note.search_text = strip_markdown(post.content)
+
+            # Rebuild tags
+            for nt in list(note.note_tags):
+                db.delete(nt)
+            db.flush()
+
+            file_tags = post.metadata.get("tags") or []
+            seen_tag_ids = set()
+            for tag_name in file_tags:
+                name = str(tag_name).strip().lower()[:30]
+                if not name:
+                    continue
+                tag = db.query(Tag).filter_by(user_id=note.user_id, name=name).first()
+                if not tag:
+                    tag = Tag(user_id=note.user_id, name=name)
+                    db.add(tag)
+                    db.flush()
+                if tag.id not in seen_tag_ids:
+                    seen_tag_ids.add(tag.id)
+                    db.add(NoteTag(note_id=note.id, tag_id=tag.id))
+
+            count += 1
+
+        db.commit()
+        click.echo(f"Reindexed {count} note(s).")
 
     return app

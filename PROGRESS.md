@@ -53,19 +53,48 @@
     - `test_storage.py` — 19 tests: local backend (text, bytes, exists, delete, missing key raises, presigned=None, health, traversal rejection); S3 backend fully mocked (put/get text, put/get bytes, exists true/false, delete, presigned URL, health ok/fail)
     - `test_health.py` — 1 existing test
 
+- **Stage 2: Notes, Notebooks, and Tags API**
+  - **Notes API** (`backend/app/routes/notes.py`):
+    - `POST /api/notes` — creates note id (UUID4), writes front matter Markdown to storage `users/{user_id}/notes/{note_id}.md`, then writes DB row in single transaction.
+    - `GET /api/notes` — lists summaries (no body) with filters: `view` (`all`, `favorites`, `archive`, `trash`), `notebook_id`, `tag`, `q` (case-insensitive search on title and search_text with `%`/`_` escaping), sorting (`updated`, `created`, `title`), `limit`, and `offset`. Pinned notes float to the top in the `all` view.
+    - `GET /api/notes/<id>` — returns full note including `content` extracted from storage file.
+    - `PATCH /api/notes/<id>` — updates title, content, notebook_id, tags, is_pinned, is_favorite, is_archived. Supports optimistic concurrency with `base_version` (returns 409 conflict if mismatched). Increments version and performs two-place save (file first, then DB).
+    - `DELETE /api/notes/<id>` — soft delete (sets `deleted_at`).
+    - `POST /api/notes/<id>/restore` — restores soft-deleted note (clears `deleted_at`).
+    - `DELETE /api/notes/<id>/permanent` — permanently deletes DB row, tag links, attachments, and the storage file.
+    - `POST /api/trash/empty` — empties trash for current user, deleting files and DB records.
+    - Lazy trash purge (D3.7): automatically purges notes trashed over `TRASH_PURGE_DAYS` (default 30) when trash is viewed or emptied.
+  - **Notebooks API** (`backend/app/routes/notebooks.py`):
+    - `GET /api/notebooks` — lists notebooks scoped to current user.
+    - `POST /api/notebooks` — creates notebook with unique name per user.
+    - `PATCH /api/notebooks/<id>` — renames notebook with validation and collision checks.
+    - `DELETE /api/notebooks/<id>` — deletes notebook while keeping notes unfiled (`notebook_id` set to `null`).
+  - **Tags API** (`backend/app/routes/tags.py`):
+    - `GET /api/tags` — returns list of tags for current user with accurate note counts.
+    - Tag rules: trimmed, lowercased, at most 30 characters, at most 10 per note, auto-deduplicated.
+  - **Markdown Utilities** (`backend/app/utils.py`):
+    - `strip_markdown`: strips code blocks, inline code, links, images, headings, quotes, lists, bold/italic, tables, HTML tags.
+    - `make_snippet`: generates snippet from first 200 chars of plain text body.
+  - **CLI Command** (`backend/app/__init__.py`):
+    - `flask reindex` — reads all stored Markdown files and rebuilds the notes table's title, snippet, search_text, and tag links.
+  - **Tests** (`backend/tests/test_notes.py`):
+    - 39 comprehensive tests covering: CRUD for notes and notebooks, user isolation (404 on reading, updating, deleting another user's note/notebook), search with special character escaping, filter views (`all`, `favorites`, `archive`, `trash`), tag constraints, pin ordering, trash and restore, lazy purge with back-dated notes, 409 version conflict, failure injection (DB commit failure leaves no partial state, retry succeeds consistently), and `flask reindex` CLI command.
+    - Total test suite: 78 tests passing across all suites in 17.36s.
+
 ## How to Run
 
 ```sh
 # From backend/
 cp ../.env.example ../.env   # edit if needed
 flask init-db
+flask reindex                # rebuilds DB index from stored markdown files
 python wsgi.py               # dev server at http://localhost:8000
-pytest tests/ -v             # run all tests
+pytest tests/ -v             # run all 78 tests
 ```
 
 ## Next
 
-- Stage 2: Notes CRUD — `POST /api/notes`, `GET /api/notes`, `GET/PATCH/DELETE /api/notes/{id}`, storage write, search with LIKE.
+- Stage 3: Rich Text Editor & Frontend Workspace — Vite/React integration, `@milkdown/crepe` editor, three-pane layout, auto-save, sidebar notebook/tag navigation.
 
 ## Decisions
 
@@ -75,9 +104,11 @@ pytest tests/ -v             # run all tests
 - JWT `sub` claim is stored as a string (not int) to satisfy PyJWT 2.x strict type checking; converted back to int when loading user from DB.
 - `Secure` cookie flag is disabled when `TESTING=True` so Werkzeug test client (HTTP only) correctly sends the cookie back in subsequent requests.
 - `init_extensions()` stores engine and session both on the `app` instance (`app._db_engine`, `app._db_session`) and on module-level globals. Routes use `current_app._db_session()` so multiple test app instances don't clobber each other's sessions.
-- Lazy trash purge (spec D3.7) will be implemented in the Notes stage (Stage 2).
+- Added `TRASH_PURGE_DAYS` to `Config` (default 30 days) to configure lazy purge period.
+- Front-matter metadata in `.md` files includes both `notebook` and `notebook name` keys for maximum interoperability.
+- Tag sanitation occurs both on API payload receipt and during front-matter serialization to prevent duplicate tag errors during index rebuilding.
+- Two-place save guarantees: UUID is generated before disk write; storage write occurs first; database transaction wraps row updates and tag synchronization; database exceptions rollback and return HTTP 500.
 
 ## Known Issues
 
 - `local_data/` is created on first storage write, not on startup (acceptable — matches lazy init).
-- The `.venv` was recreated (original Python 3.12 install path changed); all packages reinstalled from `requirements.txt`.

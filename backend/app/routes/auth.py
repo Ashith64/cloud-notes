@@ -258,12 +258,10 @@ def change_password():
 @auth_bp.route("/demo", methods=["POST"])
 @csrf_required
 def demo():
-    """Create or reuse the demo account and return a session cookie.
-
-    Note content is seeded in Stage 3.  This route just ensures the user exists.
-    """
+    """Create or reuse the demo account, seed sample notes, and return a cookie."""
     db = _db()
     user: User | None = db.query(User).filter_by(email=_DEMO_EMAIL).first()
+    created = False
     if not user:
         user = User(
             email=_DEMO_EMAIL,
@@ -273,6 +271,16 @@ def demo():
         db.add(user)
         db.commit()
         db.refresh(user)
+        created = True
+
+    # Seed demo notes — always call so it is idempotent on repeated requests
+    try:
+        from ..scripts.seed_demo import seed
+        from ..storage.factory import get_storage
+        seed(user, db, get_storage(), current_app._get_current_object())
+    except Exception:
+        log.exception("Demo seed failed for user %s", user.id)
+        # Non-fatal: user still gets a session
 
     token = _make_token(user.id)
     resp = jsonify({"id": user.id, "email": user.email, "name": user.name})

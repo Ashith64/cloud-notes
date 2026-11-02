@@ -30,10 +30,16 @@ def create_app(config_class=Config):
     from .routes.notes import notes_bp
     from .routes.notebooks import notebooks_bp
     from .routes.tags import tags_bp
+    from .routes.attachments import attachments_bp
+    from .routes.export_routes import export_bp
+    from .routes.status import status_bp
     app.register_blueprint(auth_bp)
     app.register_blueprint(notes_bp)
     app.register_blueprint(notebooks_bp)
     app.register_blueprint(tags_bp)
+    app.register_blueprint(attachments_bp)
+    app.register_blueprint(export_bp)
+    app.register_blueprint(status_bp)
 
     # ------------------------------------------------------------------
     # Public routes

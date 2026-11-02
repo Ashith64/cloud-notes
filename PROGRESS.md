@@ -92,11 +92,53 @@ python wsgi.py               # dev server at http://localhost:8000
 pytest tests/ -v             # run all 78 tests
 ```
 
+- **Stage 3: Attachments, Export, Status, and Demo Data**
+  - **Attachments API** (`backend/app/routes/attachments.py`):
+    - `POST /api/attachments` — accepts multipart upload (`file`, `note_id`), checks ownership of note, strictly validates file type via initial magic bytes (supporting png, jpg, gif, webp, pdf up to 10 MB limit), stores at `users/{user_id}/attachments/{id}.{ext}`, returns `{id, ref, url}` with stable reference `attachments/{id}.{ext}` and URL `/api/attachments/{id}`.
+    - `GET /api/attachments/<id>` — checks cookie and enforces strict user ownership (404 on other user's attachment); in S3 mode answers 302 to a 300-second presigned URL, in local mode streams binary data with correct MIME type and `Content-Disposition`.
+    - Permanent note deletion (`DELETE /api/notes/<id>/permanent`) cascade-deletes all associated attachment records and objects in storage.
+  - **Export API** (`backend/app/routes/export_routes.py`):
+    - `GET /api/notes/<id>/export` — downloads single note as safe `<safe-title>-<shortid>.md` with front matter and body.
+    - `GET /api/export` — streams ZIP of all user notes into `notes/` directory and attachments into `attachments/` directory; rewrites in-body image/pdf links from `attachments/<file>` to `../attachments/<file>` so offline viewing works seamlessly.
+    - Enforces 200 MB maximum archive size cap returning HTTP 413 if exceeded.
+  - **System Status API** (`backend/app/routes/status.py`):
+    - `GET /api/status` — public endpoint reporting `instance_id` and `availability_zone` via IMDSv2 (1-second timeout, fallback to `"local"`), `running_servers` and `average_cpu` via Auto Scaling and CloudWatch (null if unconfigured), `db_ok` via `SELECT 1`, `storage_ok` via storage health check, `last_backup` from RDS `LatestRestorableTime` (null if unconfigured), `version`, and `uptime_seconds`.
+    - Graceful degradation: all checks fail cleanly to null or false without crashing. Cached in-memory for 10 seconds.
+  - **Demo Seeding Script & Integration** (`backend/app/scripts/seed_demo.py`):
+    - Created idempotent seeder creating 3 notebooks (`College`, `Projects`, `Personal`) and 12 realistic sample notes for a cloud computing student: OSI model, AWS EC2 basics, Docker vs virtual machines, How load balancing works, IaaS PaaS SaaS, S3 storage classes, IAM least privilege, CAP theorem, Semester 5 exam plan, Project ideas, Weekly timetable, Reading list.
+    - Varied formatting: markdown tables, code blocks, checklists, quotes, and links. Exactly 1 pinned note, 2 favorites, and multiple tags.
+    - Integrated with `POST /api/auth/demo` so demo login immediately yields a fully populated workspace.
+  - **Tests**:
+    - `test_attachments.py` — 15 tests covering all formats, magic byte verification, type spoofing rejections, oversized payload rejections, note ownership isolation, unauthenticated access, and cascade deletion.
+    - `test_export.py` — 11 tests covering single note download, safe filenames, cross-user isolation, full zip archive structure, attachment link rewriting, attachment inclusion in zip, and 200 MB limit guard.
+    - `test_status.py` — 14 tests covering public access, all field presence, unconfigured null fallbacks, local fallbacks, mocked ASG / CloudWatch and RDS backup data, and in-memory 10-second cache.
+    - `test_demo.py` — 14 tests covering demo login, exact 3 notebooks and 12 notes creation, idempotency on repeated invocations (2x and 3x), pin and favorite constraints, notebook categorisation, and tag listings.
+    - Total test suite: 137 tests passing in ~31s.
+
+## How to Run
+
+```sh
+# From backend/
+cp ../.env.example ../.env   # edit if needed
+flask init-db
+flask reindex                # rebuilds DB index from stored markdown files
+python wsgi.py               # dev server at http://localhost:8000
+pytest tests/ -v             # run all 137 tests
+```
+
 ## Next
 
-- Stage 3: Rich Text Editor & Frontend Workspace — Vite/React integration, `@milkdown/crepe` editor, three-pane layout, auto-save, sidebar notebook/tag navigation.
+- Stage 4: Frontend Workspace & Notion-style Editor (React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui, @milkdown/crepe editor, responsive three-pane layout).
 
 ## Decisions
+
+- Validated file content signatures via byte markers (`_MAGIC` table and WebP RIFF/WEBP check) rather than trusting client MIME types or file extensions.
+- Capped attachment uploads at 10 MB checked dynamically on streaming read to prevent memory exhaustion.
+- Enforced strict user scoping on attachment retrieval and single/full export to guarantee data isolation.
+- Used in-memory zip streaming generator with pre-flight size aggregation to ensure total export does not exceed 200 MB cap.
+- Status route implements IMDSv2 token flow with 1.0s timeout to avoid blocking when running outside AWS EC2.
+- In-memory 10-second cache with thread lock on `/api/status` prevents excessive polling load on CloudWatch and RDS APIs.
+- Demo seeder checks existing records by title per user to ensure idempotency across multiple demo logins.
 
 - Set default port to 8000 in `backend/wsgi.py` aligned with the single container specification in `docs/SPEC.md`.
 - Stored exact pinned dependencies in `backend/requirements.txt` using UTF-8 encoding.

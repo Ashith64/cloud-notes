@@ -126,11 +126,82 @@ python wsgi.py               # dev server at http://localhost:8000
 pytest tests/ -v             # run all 137 tests
 ```
 
+- **Stage 4: Frontend Foundation and Authentication**
+  - **Dependencies & Setup** (`frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.app.json`):
+    - Configured Vite with React, `@tailwindcss/vite` (Tailwind CSS v4), path aliases (`@/*` -> `./src/*`), and `/api` reverse proxy to backend at `http://127.0.0.1:8000`.
+    - Self-hosted `@fontsource-variable/inter` for UI typography with zero external CDN dependencies.
+    - Added UI libraries: `@tanstack/react-query`, `zustand`, `react-router-dom`, `lucide-react`, `sonner`, `clsx`, `tailwind-merge`, `class-variance-authority`, `cmdk`.
+  - **Design System & Tokens** (`frontend/src/index.css`):
+    - Implemented exact C2 design tokens as CSS variables for light and dark modes: background (`#FAFAF9` / `#0F0F11`), surface (`#FFFFFF` / `#17171A`), sidebar (`#F5F5F4` / `#131315`), border (`#E7E5E4` / `#27272A`), text (`#1C1917` / `#F4F4F5`), muted text (`#78716C` / `#A1A1AA`), accent (`#4F46E5` / `#818CF8`), accent soft (`#EEF2FF` / `#1E1B4B`), danger/success (`#DC2626`/`#16A34A` and `#F87171`/`#4ADE80`).
+    - Card radius 12px, inputs/buttons radius 8px, card shadow and hover elevations, 150ms ease-out transitions.
+  - **Theme Provider** (`frontend/src/providers/ThemeProvider.tsx`, `frontend/index.html`):
+    - Supports System, Light, and Dark modes, persisted in `localStorage` under `cloudnotes_theme`.
+    - Synchronized with OS `prefers-color-scheme` media query changes.
+    - Inline anti-flash script in `index.html` prevents theme flashing on initial page load.
+  - **shadcn/ui Components** (`frontend/src/components/ui/`):
+    - Implemented all 16 requested components: `button`, `input`, `label`, `dialog`, `dropdown-menu`, `context-menu`, `command`, `sonner`, `skeleton`, `tooltip`, `avatar`, `sheet`, `separator`, `scroll-area`, `badge`, `switch`.
+  - **API Client & Query Setup** (`frontend/src/lib/api.ts`, `frontend/src/lib/queryClient.ts`):
+    - Typed `ApiError` class capturing status, spec code, and message.
+    - Automatically sends credentials (cookies) and required `X-Requested-With: cloudnotes` header on every request.
+    - TanStack Query client configured with 30s stale time and intelligent retry rules (no retries for 401, 403, 404).
+  - **Routing & Auth Guards** (`frontend/src/components/AuthGuard.tsx`, `frontend/src/main.tsx`):
+    - Routes: `/login`, `/app`, `/settings`, `/status`, and wildcard 404.
+    - `AuthProvider` validates session against `GET /api/auth/me` with loading skeleton state.
+    - `RequireAuth` redirects unauthenticated users to `/login`.
+    - `RequireGuest` redirects authenticated users from `/login` to `/app`.
+  - **Screens Implemented**:
+    - **Login & Sign up** (`frontend/src/pages/LoginPage.tsx`): C3.1 split layout with soft indigo brand gradient panel, tagline, 3 key benefits; toggleable password visibility; inline friendly errors; loading button state; "Try demo account" one-click button; mobile layout showing form only.
+    - **Workspace Shell** (`frontend/src/pages/WorkspacePage.tsx`, `frontend/src/pages/WorkspaceHome.tsx`): C3.2 responsive 3-pane shell with 248px sidebar, 340px note list, and editor space. Below 1024px, sidebar collapses into a slide-in sheet drawer. Below 640px, collapses into mobile 1-pane view. Top bar includes search bar with ⌘K badge, New note button, theme switcher, and avatar dropdown menu with logout.
+    - **System Status** (`frontend/src/pages/StatusPage.tsx`): C3.5 public status dashboard auto-refreshing every 5 seconds with health dots (green/amber/red) and card grid for Instance ID, Availability Zone, Compute, DB status, Storage status, RDS Backup, and Application version.
+    - **Settings** (`frontend/src/pages/SettingsPage.tsx`): Account details, visual theme picker (System, Light, Dark), password change placeholder, and export all zip button.
+    - **Error Boundary & 404** (`frontend/src/components/ErrorBoundary.tsx`, `frontend/src/pages/NotFoundPage.tsx`): Styled error recovery screen and 404 not found page.
+  - **Verification & Testing**:
+    - Automated headless browser test suite (`frontend/verify-stage4.js` using Edge) verified all user journeys:
+      - New user registration -> redirected to `/app` -> user profile confirmation.
+      - User logout -> redirected to `/login`.
+      - User login with credentials.
+      - "Try demo account" instant login with seeded notes.
+      - Theme switching between System, Light, and Dark modes.
+      - Status page polling with live database and storage status.
+      - Responsive layout adaptation at desktop (1280px), tablet (768px with drawer), and mobile (375px).
+    - Captured 14 high-resolution verification screenshots into `docs/screenshots/`:
+      - `login-desktop-light.png`, `login-desktop-dark.png`, `login-tablet.png`, `login-mobile.png`
+      - `workspace-desktop-light.png`, `workspace-desktop-dark.png`, `workspace-tablet.png`, `workspace-drawer-open.png`, `workspace-mobile.png`
+      - `status-desktop-light.png`, `status-desktop-dark.png`, `status-mobile.png`
+      - `settings-desktop.png`, `not-found.png`
+    - All 137 backend tests continue to pass (100%).
+    - Frontend TypeScript check and Vite production build pass cleanly with zero errors.
+
+## How to Run
+
+```sh
+# Backend (port 8000)
+cd backend
+.venv\Scripts\python.exe wsgi.py
+
+# Frontend dev server (port 5173/5174)
+cd frontend
+npm run dev
+
+# Run automated browser verification test
+node verify-stage4.js
+
+# Run backend test suite
+cd backend
+.venv\Scripts\python.exe -m pytest tests/ -v
+```
+
 ## Next
 
-- Stage 4: Frontend Workspace & Notion-style Editor (React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui, @milkdown/crepe editor, responsive three-pane layout).
+- Stage 5A: Notion-Style Visual Editor (@milkdown/crepe integration, Markdown body sync, tags inline editor, toolbar, autosave).
 
 ## Decisions
+
+- Preserved backend port 8000 in `backend/wsgi.py` and configured Vite proxy to target `http://127.0.0.1:8000` to maintain consistency with Stage 0-3 verifications and single-container production specification.
+- Used `@tailwindcss/vite` plugin with Tailwind CSS v4 and CSS theme variables for seamless design token integration with shadcn/ui components.
+- Implemented inline anti-flash script in `index.html` to prevent layout/theme flashes when users reload in dark mode.
+- Used `erasableSyntaxOnly` compatible class syntax in `ApiError` to satisfy TypeScript 7 strict compiler rules.
+- Automated browser testing using Edge with `puppeteer-core` directly against the live dev server without downloading extra binaries.
 
 - Validated file content signatures via byte markers (`_MAGIC` table and WebP RIFF/WEBP check) rather than trusting client MIME types or file extensions.
 - Capped attachment uploads at 10 MB checked dynamically on streaming read to prevent memory exhaustion.

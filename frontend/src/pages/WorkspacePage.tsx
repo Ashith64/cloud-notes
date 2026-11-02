@@ -1,14 +1,39 @@
-import { useState } from 'react'
-import { useNavigate, Outlet } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
+import { useNavigate, useSearchParams, Outlet } from 'react-router-dom'
 import {
-  FileText, Star, Archive, Trash2, Plus, Moon, Sun, Monitor,
-  Menu, Search, LogOut, Settings, Activity, BookOpen, ChevronDown,
-  Cloud, Hash,
+  FileText,
+  Star,
+  Archive,
+  Trash2,
+  Plus,
+  Moon,
+  Sun,
+  Monitor,
+  Menu,
+  Search,
+  Settings,
+  Activity,
+  BookOpen,
+  ChevronDown,
+  Cloud,
+  Hash,
+  MoreHorizontal,
+  Pencil,
+  LogOut,
+  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -16,79 +41,363 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { useTheme } from '@/providers/ThemeProvider'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/lib/api'
-import { queryClient } from '@/lib/queryClient'
+import { cn } from '@/lib/utils'
+import {
+  CreateNotebookDialog,
+  RenameNotebookDialog,
+} from '@/components/notebooks/NotebookDialogs'
+import type { Notebook, TagCount, NoteSummary, NoteDetail } from '@/types/note'
 
-function SidebarContent({ onClose }: { onClose?: () => void }) {
-  const navigate = useNavigate()
-  const handleLink = (path: string) => { navigate(path); onClose?.() }
+export function SidebarNav({ onClose }: { onClose?: () => void }) {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const queryClient = useQueryClient()
+
+  const currentView = searchParams.get('view') || (searchParams.get('notebook_id') || searchParams.get('tag') ? '' : 'all')
+  const currentNotebookId = searchParams.get('notebook_id')
+    ? Number(searchParams.get('notebook_id'))
+    : null
+  const currentTag = searchParams.get('tag') || null
+
+  // Notebook dialog states
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false)
+  const [selectedNotebook, setSelectedNotebook] = useState<Notebook | null>(null)
+
+  // Queries
+  const { data: notebooks = [] } = useQuery<Notebook[]>({
+    queryKey: ['notebooks'],
+    queryFn: () => api.get<Notebook[]>('/api/notebooks'),
+  })
+
+  const { data: tags = [] } = useQuery<TagCount[]>({
+    queryKey: ['tags'],
+    queryFn: () => api.get<TagCount[]>('/api/tags'),
+  })
+
+  const { data: allNotes = [] } = useQuery<NoteSummary[]>({
+    queryKey: ['notes', 'all', '', '', ''],
+    queryFn: () => api.get<NoteSummary[]>('/api/notes?view=all&limit=200'),
+  })
+
+  const { data: favNotes = [] } = useQuery<NoteSummary[]>({
+    queryKey: ['notes', 'favorites', '', '', ''],
+    queryFn: () => api.get<NoteSummary[]>('/api/notes?view=favorites&limit=200'),
+  })
+
+  const { data: archiveNotes = [] } = useQuery<NoteSummary[]>({
+    queryKey: ['notes', 'archive', '', '', ''],
+    queryFn: () => api.get<NoteSummary[]>('/api/notes?view=archive&limit=200'),
+  })
+
+  const { data: trashNotes = [] } = useQuery<NoteSummary[]>({
+    queryKey: ['notes', 'trash', '', '', ''],
+    queryFn: () => api.get<NoteSummary[]>('/api/notes?view=trash&limit=200'),
+  })
+
+  // Navigation handlers
+  const handleSelectView = (view: 'all' | 'favorites' | 'archive' | 'trash') => {
+    const params = new URLSearchParams()
+    params.set('view', view)
+    const activeNote = searchParams.get('note')
+    if (activeNote) params.set('note', activeNote)
+    setSearchParams(params)
+    onClose?.()
+  }
+
+  const handleSelectNotebook = (id: number) => {
+    const params = new URLSearchParams()
+    params.set('notebook_id', String(id))
+    const activeNote = searchParams.get('note')
+    if (activeNote) params.set('note', activeNote)
+    setSearchParams(params)
+    onClose?.()
+  }
+
+  const handleSelectTag = (name: string) => {
+    const params = new URLSearchParams()
+    params.set('tag', name)
+    const activeNote = searchParams.get('note')
+    if (activeNote) params.set('note', activeNote)
+    setSearchParams(params)
+    onClose?.()
+  }
+
+  // Notebook mutations
+  const handleCreateNotebook = async (name: string) => {
+    const res = await api.post<Notebook>('/api/notebooks', { name })
+    queryClient.invalidateQueries({ queryKey: ['notebooks'] })
+    toast.success(`Notebook "${res.name}" created`)
+  }
+
+  const handleRenameNotebook = async (id: number, newName: string) => {
+    const res = await api.patch<Notebook>(`/api/notebooks/${id}`, { name: newName })
+    queryClient.invalidateQueries({ queryKey: ['notebooks'] })
+    toast.success(`Renamed to "${res.name}"`)
+  }
+
+  const handleDeleteNotebook = async (nb: Notebook) => {
+    if (!window.confirm(`Delete notebook "${nb.name}"? Notes in it will become unfiled.`)) {
+      return
+    }
+    try {
+      await api.delete(`/api/notebooks/${nb.id}`)
+      queryClient.invalidateQueries({ queryKey: ['notebooks'] })
+      queryClient.invalidateQueries({ queryKey: ['notes'] })
+      toast.success(`Notebook "${nb.name}" deleted`)
+      if (currentNotebookId === nb.id) {
+        handleSelectView('all')
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to delete notebook')
+    }
+  }
+
   return (
-    <div className="flex h-full flex-col">
-      {/* Logo */}
-      <div className="flex items-center gap-2.5 px-4 py-4">
+    <div className="flex h-full flex-col bg-[var(--sidebar)] text-[var(--sidebar-foreground)]">
+      {/* Brand Header */}
+      <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-[var(--border)]">
         <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--accent-soft)]">
           <Cloud className="h-4 w-4 text-[var(--accent)]" strokeWidth={1.75} />
         </div>
-        <span className="text-sm font-semibold text-[var(--foreground)]">Cloud Notes</span>
+        <span className="text-sm font-semibold text-[var(--foreground)] tracking-tight">
+          Cloud Notes
+        </span>
       </div>
-      <Separator />
-      <ScrollArea className="flex-1 py-3 px-2">
+
+      <ScrollArea className="flex-1 px-2 py-3">
+        {/* Main Views Navigation */}
         <nav className="space-y-0.5">
-          <button onClick={() => handleLink('/app')} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)] transition-colors">
-            <FileText className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />All Notes
+          <button
+            onClick={() => handleSelectView('all')}
+            className={cn(
+              'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm transition-colors text-left',
+              currentView === 'all' && !currentNotebookId && !currentTag
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                : 'text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)]'
+            )}
+          >
+            <div className="flex items-center gap-2.5 truncate">
+              <FileText className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
+              <span>All Notes</span>
+            </div>
+            {allNotes.length > 0 && (
+              <span className="text-xs text-[var(--muted-foreground)] font-normal">
+                {allNotes.length}
+              </span>
+            )}
           </button>
-          <button onClick={() => handleLink('/app')} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)] transition-colors">
-            <Star className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />Favorites
+
+          <button
+            onClick={() => handleSelectView('favorites')}
+            className={cn(
+              'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm transition-colors text-left',
+              currentView === 'favorites'
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                : 'text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)]'
+            )}
+          >
+            <div className="flex items-center gap-2.5 truncate">
+              <Star className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
+              <span>Favorites</span>
+            </div>
+            {favNotes.length > 0 && (
+              <span className="text-xs text-[var(--muted-foreground)] font-normal">
+                {favNotes.length}
+              </span>
+            )}
           </button>
-          <button onClick={() => handleLink('/app')} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)] transition-colors">
-            <Archive className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />Archive
+
+          <button
+            onClick={() => handleSelectView('archive')}
+            className={cn(
+              'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm transition-colors text-left',
+              currentView === 'archive'
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                : 'text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)]'
+            )}
+          >
+            <div className="flex items-center gap-2.5 truncate">
+              <Archive className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
+              <span>Archive</span>
+            </div>
+            {archiveNotes.length > 0 && (
+              <span className="text-xs text-[var(--muted-foreground)] font-normal">
+                {archiveNotes.length}
+              </span>
+            )}
           </button>
-          <button onClick={() => handleLink('/app')} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)] transition-colors">
-            <Trash2 className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />Trash
+
+          <button
+            onClick={() => handleSelectView('trash')}
+            className={cn(
+              'flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-sm transition-colors text-left',
+              currentView === 'trash'
+                ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                : 'text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)]'
+            )}
+          >
+            <div className="flex items-center gap-2.5 truncate">
+              <Trash2 className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
+              <span>Trash</span>
+            </div>
+            {trashNotes.length > 0 && (
+              <span className="text-xs text-[var(--muted-foreground)] font-normal">
+                {trashNotes.length}
+              </span>
+            )}
           </button>
         </nav>
 
         <Separator className="my-3" />
 
-        {/* Notebooks */}
-        <div className="px-3 pb-1 flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Notebooks</span>
-          <button aria-label="New notebook" className="text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors">
-            <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
-          </button>
-        </div>
-        <nav className="space-y-0.5">
-          {['College', 'Projects', 'Personal'].map((nb) => (
-            <button key={nb} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)] transition-colors">
-              <BookOpen className="h-[16px] w-[16px] shrink-0" strokeWidth={1.75} />
-              {nb}
+        {/* Notebooks Section */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between px-2.5 pb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+              Notebooks
+            </span>
+            <button
+              onClick={() => setCreateDialogOpen(true)}
+              aria-label="New notebook"
+              className="p-1 rounded hover:bg-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
             </button>
-          ))}
-        </nav>
+          </div>
+
+          <nav className="space-y-0.5">
+            {notebooks.map((nb) => {
+              const nbNoteCount = allNotes.filter((n) => n.notebook_id === nb.id).length
+              const isSelected = currentNotebookId === nb.id
+              return (
+                <div
+                  key={nb.id}
+                  className={cn(
+                    'group flex items-center justify-between rounded-lg px-2.5 py-1 text-sm transition-colors cursor-pointer',
+                    isSelected
+                      ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                      : 'text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)]'
+                  )}
+                  onClick={() => handleSelectNotebook(nb.id)}
+                >
+                  <div className="flex items-center gap-2 truncate flex-1 min-w-0">
+                    <BookOpen className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                    <span className="truncate">{nb.name}</span>
+                  </div>
+
+                  <div className="flex items-center gap-1 shrink-0">
+                    {/* Note count */}
+                    {nbNoteCount > 0 && (
+                      <span className="text-xs text-[var(--muted-foreground)] group-hover:hidden font-normal">
+                        {nbNoteCount}
+                      </span>
+                    )}
+
+                    {/* Hover menu */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Options for notebook ${nb.name}`}
+                          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[var(--border)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-36">
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setSelectedNotebook(nb)
+                            setRenameDialogOpen(true)
+                          }}
+                        >
+                          <Pencil className="mr-2 h-3.5 w-3.5" /> Rename
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDeleteNotebook(nb)
+                          }}
+                          className="text-[var(--destructive)] focus:text-[var(--destructive)]"
+                        >
+                          <Trash2 className="mr-2 h-3.5 w-3.5" /> Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              )
+            })}
+          </nav>
+        </div>
 
         <Separator className="my-3" />
 
-        {/* Tags placeholder */}
-        <div className="px-3 pb-1">
-          <span className="text-xs font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">Tags</span>
+        {/* Tags Section */}
+        <div className="space-y-1">
+          <div className="px-2.5 pb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">
+              Tags
+            </span>
+          </div>
+
+          <nav className="space-y-0.5">
+            {tags.map((tag) => {
+              const isSelected = currentTag === tag.name
+              return (
+                <button
+                  key={tag.name}
+                  onClick={() => handleSelectTag(tag.name)}
+                  className={cn(
+                    'flex w-full items-center justify-between rounded-lg px-2.5 py-1 text-sm transition-colors text-left',
+                    isSelected
+                      ? 'bg-[var(--accent-soft)] text-[var(--accent)] font-semibold'
+                      : 'text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)]'
+                  )}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <Hash className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
+                    <span className="truncate">{tag.name}</span>
+                  </div>
+                  {tag.count > 0 && (
+                    <span className="text-xs text-[var(--muted-foreground)] font-normal">
+                      {tag.count}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </nav>
         </div>
-        <nav className="space-y-0.5">
-          {['aws', 'docker', 'networking'].map((tag) => (
-            <button key={tag} className="flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-[var(--sidebar-foreground)] hover:bg-[var(--border)] hover:text-[var(--foreground)] transition-colors">
-              <Hash className="h-[14px] w-[14px] shrink-0" strokeWidth={1.75} />
-              {tag}
-            </button>
-          ))}
-        </nav>
       </ScrollArea>
+
+      {/* Notebook Dialogs */}
+      <CreateNotebookDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCreate={handleCreateNotebook}
+      />
+      <RenameNotebookDialog
+        notebook={selectedNotebook}
+        open={renameDialogOpen}
+        onOpenChange={setRenameDialogOpen}
+        onRename={handleRenameNotebook}
+      />
     </div>
   )
 }
 
 export default function WorkspacePage() {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { theme, setTheme, resolvedTheme } = useTheme()
   const { user, setUser } = useAuthStore()
+  const queryClient = useQueryClient()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  const searchQuery = searchParams.get('q') || ''
 
   const handleLogout = async () => {
     try {
@@ -101,36 +410,81 @@ export default function WorkspacePage() {
   }
 
   const cycleTheme = () => {
-    const next: Record<string, 'light' | 'dark' | 'system'> = { system: 'light', light: 'dark', dark: 'system' }
+    const next: Record<string, 'light' | 'dark' | 'system'> = {
+      system: 'light',
+      light: 'dark',
+      dark: 'system',
+    }
     setTheme(next[theme])
   }
 
+  // Create new note immediately and select it
+  const handleCreateNewNote = async () => {
+    try {
+      const notebookIdParam = searchParams.get('notebook_id')
+      const notebookId = notebookIdParam ? Number(notebookIdParam) : null
+      const res = await api.post<NoteDetail>('/api/notes', {
+        title: 'Untitled',
+        content: '',
+        notebook_id: notebookId,
+      })
+      queryClient.invalidateQueries({ queryKey: ['notes'] })
+
+      const newParams = new URLSearchParams(searchParams)
+      newParams.set('note', res.id)
+      setSearchParams(newParams)
+      toast.success('New note created')
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to create note')
+    }
+  }
+
+  // Global keyboard shortcuts (Cmd+N for new note, Cmd+K for search)
+  useEffect(() => {
+    const handleGlobalShortcuts = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+        e.preventDefault()
+        handleCreateNewNote()
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handleGlobalShortcuts)
+    return () => window.removeEventListener('keydown', handleGlobalShortcuts)
+  }, [searchParams])
+
   const ThemeIcon = resolvedTheme === 'dark' ? Moon : Sun
   const initials = user?.name
-    ? user.name.split(' ').map((p) => p[0]).join('').toUpperCase().slice(0, 2)
+    ? user.name
+        .split(' ')
+        .map((p) => p[0])
+        .join('')
+        .toUpperCase()
+        .slice(0, 2)
     : '?'
 
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-screen overflow-hidden bg-[var(--background)]">
-        {/* Desktop Sidebar — hidden below 1024px */}
+        {/* Desktop Sidebar — 248px fixed width (C2), hidden below 1024px */}
         <aside className="hidden lg:flex w-[248px] flex-shrink-0 flex-col border-r border-[var(--border)] bg-[var(--sidebar)]">
-          <SidebarContent />
+          <SidebarNav />
         </aside>
 
-        {/* Mobile drawer — shown below 1024px */}
+        {/* Mobile / Tablet Drawer — shown below 1024px */}
         <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
           <SheetContent side="left" className="p-0 bg-[var(--sidebar)] w-[248px]">
             <SheetTitle className="sr-only">Navigation</SheetTitle>
-            <SidebarContent onClose={() => setDrawerOpen(false)} />
+            <SidebarNav onClose={() => setDrawerOpen(false)} />
           </SheetContent>
         </Sheet>
 
-        {/* Main area */}
+        {/* Main Content Area */}
         <div className="flex flex-1 flex-col min-w-0">
-          {/* Top bar */}
+          {/* Top Bar (C3.2) */}
           <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4">
-            {/* Hamburger — only on tablet/phone */}
+            {/* Hamburger Button — visible on tablet/mobile */}
             <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
               <SheetTrigger asChild>
                 <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open menu">
@@ -139,25 +493,67 @@ export default function WorkspacePage() {
               </SheetTrigger>
             </Sheet>
 
-            {/* Search */}
-            <div className="flex flex-1 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 h-8 max-w-sm text-sm text-[var(--muted-foreground)] cursor-text">
-              <Search className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} />
-              <span>Search notes…</span>
-              <kbd className="ml-auto hidden sm:inline-flex h-5 items-center rounded border border-[var(--border)] bg-[var(--muted)] px-1.5 font-mono text-[10px] text-[var(--muted-foreground)]">⌘K</kbd>
+            {/* Live Search Input */}
+            <div className="flex flex-1 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 h-8 max-w-sm text-sm text-[var(--foreground)]">
+              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" strokeWidth={1.75} />
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search notes…"
+                value={searchQuery}
+                onChange={(e) => {
+                  const val = e.target.value
+                  const params = new URLSearchParams(searchParams)
+                  if (val) params.set('q', val)
+                  else params.delete('q')
+                  setSearchParams(params)
+                }}
+                className="w-full bg-transparent border-none outline-none placeholder:text-[var(--muted-foreground)] text-xs sm:text-sm"
+              />
+              {searchQuery ? (
+                <button
+                  onClick={() => {
+                    const params = new URLSearchParams(searchParams)
+                    params.delete('q')
+                    setSearchParams(params)
+                  }}
+                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : (
+                <kbd className="ml-auto hidden sm:inline-flex h-5 items-center rounded border border-[var(--border)] bg-[var(--muted)] px-1.5 font-mono text-[10px] text-[var(--muted-foreground)]">
+                  ⌘K
+                </kbd>
+              )}
             </div>
 
+            {/* Right Action Icons */}
             <div className="flex items-center gap-1.5 ml-auto">
-              {/* New note */}
+              {/* New note button */}
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button size="sm" className="gap-1.5 hidden sm:inline-flex">
+                  <Button
+                    size="sm"
+                    onClick={handleCreateNewNote}
+                    className="gap-1.5 hidden sm:inline-flex"
+                    data-testid="new-note-button"
+                  >
                     <Plus className="h-4 w-4" strokeWidth={1.75} />
                     <span>New note</span>
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>New note (⌘N)</TooltipContent>
               </Tooltip>
-              <Button size="icon" variant="ghost" className="sm:hidden" aria-label="New note">
+
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={handleCreateNewNote}
+                className="sm:hidden"
+                aria-label="New note"
+              >
                 <Plus className="h-4 w-4" strokeWidth={1.75} />
               </Button>
 
@@ -170,9 +566,11 @@ export default function WorkspacePage() {
                     onClick={cycleTheme}
                     aria-label={`Switch theme (current: ${theme})`}
                   >
-                    {theme === 'system'
-                      ? <Monitor className="h-[18px] w-[18px]" strokeWidth={1.75} />
-                      : <ThemeIcon className="h-[18px] w-[18px]" strokeWidth={1.75} />}
+                    {theme === 'system' ? (
+                      <Monitor className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                    ) : (
+                      <ThemeIcon className="h-[18px] w-[18px]" strokeWidth={1.75} />
+                    )}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Theme: {theme}</TooltipContent>
@@ -181,40 +579,50 @@ export default function WorkspacePage() {
               {/* Avatar menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 hover:bg-[var(--muted)] transition-colors" aria-label="User menu">
+                  <button
+                    className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 hover:bg-[var(--muted)] transition-colors"
+                    aria-label="User menu"
+                  >
                     <Avatar className="h-7 w-7">
                       <AvatarFallback className="text-xs">{initials}</AvatarFallback>
                     </Avatar>
-                    <ChevronDown className="h-3 w-3 text-[var(--muted-foreground)]" strokeWidth={1.75} />
+                    <ChevronDown
+                      className="h-3 w-3 text-[var(--muted-foreground)]"
+                      strokeWidth={1.75}
+                    />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-52">
                   <DropdownMenuLabel className="font-normal">
                     <div className="flex flex-col space-y-1">
-                      <p className="text-sm font-medium text-[var(--foreground)]">{user?.name}</p>
-                      <p className="text-xs text-[var(--muted-foreground)] truncate">{user?.email}</p>
+                      <p className="text-sm font-medium text-[var(--foreground)] truncate">
+                        {user?.name}
+                      </p>
+                      <p className="text-xs text-[var(--muted-foreground)] truncate">
+                        {user?.email}
+                      </p>
                     </div>
                   </DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => navigate('/settings')}>
-                    <Settings className="h-4 w-4" strokeWidth={1.75} /> Settings
+                    <Settings className="mr-2 h-4 w-4" strokeWidth={1.75} /> Settings
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => navigate('/status')}>
-                    <Activity className="h-4 w-4" strokeWidth={1.75} /> System Status
+                    <Activity className="mr-2 h-4 w-4" strokeWidth={1.75} /> System Status
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleLogout} className="text-[var(--destructive)] focus:text-[var(--destructive)]">
-                    <LogOut className="h-4 w-4" strokeWidth={1.75} /> Log out
+                  <DropdownMenuItem onClick={handleLogout} className="text-[var(--destructive)]">
+                    <LogOut className="mr-2 h-4 w-4" strokeWidth={1.75} /> Log out
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
           </header>
 
-          {/* Content */}
-          <div className="flex flex-1 min-h-0">
+          {/* Subroutes (WorkspaceHome / Note detail) */}
+          <main className="flex flex-1 min-h-0 overflow-hidden">
             <Outlet />
-          </div>
+          </main>
         </div>
       </div>
     </TooltipProvider>

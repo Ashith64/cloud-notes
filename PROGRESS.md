@@ -172,6 +172,60 @@ pytest tests/ -v             # run all 137 tests
     - All 137 backend tests continue to pass (100%).
     - Frontend TypeScript check and Vite production build pass cleanly with zero errors.
 
+- **Stage 5A: Notes List, Sidebar, and Notion-Style Visual Editor**
+  - **Sidebar Navigation & Operations** (`frontend/src/pages/WorkspacePage.tsx`, `frontend/src/components/notebooks/NotebookDialogs.tsx`):
+    - All Notes, Favorites, Archive, Trash with cheap live note counts from queries.
+    - Notebooks list with note counts, "+ New notebook" dialog, and hover menu (`...`) with Rename and Delete operations (notes remain unfiled).
+    - Tags list with exact note counts.
+    - Filter selection reflected immediately in the URL query params (`?view=`, `?notebook_id=`, `?tag=`, `?q=`).
+    - Top bar live search input (Ctrl/Cmd+K) and New note shortcut (Ctrl/Cmd+N).
+  - **Note List** (`frontend/src/components/notes/NoteList.tsx`, `frontend/src/components/notes/NoteCard.tsx`):
+    - Pinned and Recent sections (pinned notes float to top in All Notes view).
+    - Cards show title, two-line snippet preview, tag chips, and relative time ("2h ago", "Just now", etc.).
+    - Hover pin and trash action buttons.
+    - Right-click context menu (Pin, Favorite, Move to notebook submenu, Archive, Export as Markdown, Delete).
+    - Selected card styling (`accent-soft` background, accent border).
+    - Keyboard Up and Down navigation with automatic scroll into view.
+    - Trash view with "Empty Trash" confirmation dialog.
+    - Skeleton loaders for notes list while loading.
+    - Empty states for no notes, empty trash, no search results.
+  - **New Note Creation**:
+    - Creates an "Untitled" note on the server immediately via `POST /api/notes`, selects it, and focuses the title.
+  - **Notion-Style Visual Editor with @milkdown/crepe** (`frontend/src/components/editor/MilkdownEditor.tsx`, `frontend/src/components/editor/NoteEditor.tsx`):
+    - Crepe 7.23 integration supporting slash menu, floating toolbar, block handles, lists, task checklists, links, CodeMirror syntax-highlighted code blocks, tables, and image blocks.
+    - Official theme CSS imported and overridden to match C2 tokens in both light and dark modes.
+    - C2 typography: 17px body, 1.75 line-height, 720px centered max-width column, 32px bold borderless title.
+    - Tag chips row with inline `+ tag` add field and tag removal.
+    - Quiet footer displaying live save status ("Saving...", "Saved just now", "Not saved yet" with retry button) and `...` actions menu (Export, Move to notebook, Archive, Delete).
+    - 120ms fade-in transition when switching notes.
+  - **Autosave Controller** (`frontend/src/hooks/useNoteAutosave.ts`):
+    - 800ms debounce after the last keystroke.
+    - Strictly prevents concurrent saves of the same note (`inFlightRef`).
+    - Coalesces edits made while a save is in flight and immediately triggers next save on response.
+    - Retries transient and network errors with exponential back-off (1s, 2s, 4s, up to 10s).
+    - Flushes save immediately when switching notes or unmounting.
+    - Warns before closing the tab if edits are unsaved via `beforeunload`.
+    - Optimistic updates in query cache so the note card title and snippet update instantly while typing.
+    - 409 conflict handling updates server version and retries safely.
+    - Stale response guard prevents overwriting newer selected notes.
+  - **Browser Verification & Disk Inspection** (`frontend/verify-stage5a.js`):
+    - Automated headless Edge verification test ran end-to-end:
+      - Demo login -> Sidebar counts & navigation -> Light/Dark note list -> Right-click context menu -> Keyboard Up/Down navigation.
+      - Created new note on server -> Edited title, added Markdown table, checklist, and syntax-highlighted Python code block -> Added tags.
+      - Verified Autosave transitioned through Saving... -> Saved just now.
+      - Switched notes and back (120ms fade-in verified).
+      - Reloaded page: verified all title, table, checklist, and code blocks persisted exactly.
+      - Mobile view (375px) tested with back navigation.
+      - Inspected stored `.md` file on disk: confirmed clean YAML front-matter and standard Markdown body with zero data loss.
+    - Captured 5 high-resolution screenshots into `docs/screenshots/`:
+      - `stage5a-notes-list-light.png`
+      - `stage5a-notes-list-dark.png`
+      - `stage5a-context-menu.png`
+      - `stage5a-editor-formatted.png`
+      - `stage5a-mobile-view.png`
+    - All 137 backend pytest tests continue to pass 100%.
+    - Frontend TypeScript check and Vite production build pass cleanly with zero errors.
+
 ## How to Run
 
 ```sh
@@ -184,7 +238,7 @@ cd frontend
 npm run dev
 
 # Run automated browser verification test
-node verify-stage4.js
+node verify-stage5a.js
 
 # Run backend test suite
 cd backend
@@ -193,7 +247,7 @@ cd backend
 
 ## Next
 
-- Stage 5A: Notion-Style Visual Editor (@milkdown/crepe integration, Markdown body sync, tags inline editor, toolbar, autosave).
+- Stage 5B: Polish & Search / Command Palette (⌘K full integration, fuzzy search, attachment upload drag-drop in editor, keyboard shortcuts).
 
 ## Decisions
 

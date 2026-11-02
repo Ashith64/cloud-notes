@@ -1,5 +1,7 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+@import "@milkdown/crepe/theme/common/style.css";
+@import "@milkdown/crepe/theme/frame.css";
 
 @theme {
   --color-background: var(--background);
@@ -125,3 +127,123 @@ body {
 .card-shadow:hover {
   box-shadow: var(--shadow-card-hover);
 }
+
+/* 120ms fade transition for switching notes (C2, C3.2) */
+@keyframes fadeIn120 {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in-120 {
+  animation: fadeIn120 120ms ease-out forwards;
+}
+
+/* Crepe Theme Overrides (light & dark) */
+.milkdown {
+  --crepe-color-background: var(--surface);
+  --crepe-color-on-background: var(--foreground);
+  --crepe-color-surface: var(--surface);
+  --crepe-color-surface-low: var(--muted);
+  --crepe-color-on-surface: var(--foreground);
+  --crepe-color-on-surface-variant: var(--muted-foreground);
+  --crepe-color-outline: var(--border);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-soft);
+  --crepe-color-on-secondary: var(--accent);
+  --crepe-color-inverse: var(--foreground);
+  --crepe-color-on-inverse: var(--background);
+  --crepe-color-inline-code: var(--accent);
+  --crepe-color-error: var(--destructive);
+  --crepe-color-hover: var(--muted);
+  --crepe-color-selected: var(--accent-soft);
+  --crepe-color-inline-area: var(--muted);
+
+  --crepe-base-font-size: 17px;
+  --crepe-font-title: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --crepe-font-default: 'Inter Variable', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --crepe-font-code: 'JetBrains Mono', monospace;
+
+  width: 100%;
+}
+
+.dark .milkdown {
+  --crepe-color-background: var(--surface);
+  --crepe-color-on-background: var(--foreground);
+  --crepe-color-surface: var(--surface);
+  --crepe-color-surface-low: var(--muted);
+  --crepe-color-on-surface: var(--foreground);
+  --crepe-color-on-surface-variant: var(--muted-foreground);
+  --crepe-color-outline: var(--border);
+  --crepe-color-primary: var(--accent);
+  --crepe-color-secondary: var(--accent-soft);
+  --crepe-color-on-secondary: var(--accent);
+  --crepe-color-inverse: var(--foreground);
+  --crepe-color-on-inverse: var(--background);
+  --crepe-color-inline-code: var(--accent);
+  --crepe-color-error: var(--destructive);
+  --crepe-color-hover: var(--muted);
+  --crepe-color-selected: var(--accent-soft);
+  --crepe-color-inline-area: var(--muted);
+}
+
+/* Crepe editor typography and content column (C2: 17px body, line-height 1.75, content column max 720px, centred) */
+.milkdown .ProseMirror {
+  max-width: 720px;
+  margin: 0 auto;
+  font-size: 17px;
+  line-height: 1.75;
+  color: var(--foreground);
+  outline: none;
+  min-height: 280px;
+  padding: 0.5rem 0 12rem 0;
+}
+
+.milkdown .ProseMirror p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.milkdown .ProseMirror h1,
+.milkdown .ProseMirror h2,
+.milkdown .ProseMirror h3,
+.milkdown .ProseMirror h4 {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.milkdown .ProseMirror code {
+  font-family: var(--font-mono);
+}
+
+.milkdown .ProseMirror pre {
+  font-family: var(--font-mono);
+  border-radius: 8px;
+  background-color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.milkdown .ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.milkdown .ProseMirror th,
+.milkdown .ProseMirror td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.milkdown .ProseMirror th {
+  background-color: var(--muted);
+  font-weight: 600;
+}
+

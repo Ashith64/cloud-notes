@@ -13,8 +13,18 @@ export interface NoteSummary {
   updated_at: string
 }
 
+export interface AttachmentItem {
+  id: string
+  filename: string
+  content_type: string
+  size_bytes: number
+  url: string
+  created_at: string | null
+}
+
 export interface NoteDetail extends NoteSummary {
   content: string
+  attachments?: AttachmentItem[]
 }
 
 export interface Notebook {

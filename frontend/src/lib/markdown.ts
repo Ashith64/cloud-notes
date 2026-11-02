@@ -35,3 +35,27 @@ export function makeSnippet(body: string, maxLen = 200): string {
   if (plain.length <= maxLen) return plain
   return plain.slice(0, maxLen)
 }
+
+/**
+ * Ensures Markdown references to attachments always use the stable 'attachments/<id>.<ext>' format
+ * and never raw API paths or temporary blob URLs.
+ */
+export function toStorageMarkdown(content: string): string {
+  if (!content) return ''
+  return content.replace(
+    /!\[([^\]]*)\]\((?:https?:\/\/[^/]+)?\/api\/attachments\/([a-zA-Z0-9_-]+)\)/g,
+    '![$1](attachments/$2.png)'
+  )
+}
+
+/**
+ * Maps a stored attachment reference (attachments/<id>.<ext>) to the browser display URL (/api/attachments/<id>).
+ */
+export function resolveAttachmentDomUrl(url: string): string {
+  if (!url) return ''
+  const match = url.match(/(?:^\.?\/?attachments\/|^attachments\/)([a-zA-Z0-9_-]+)(?:\.[a-zA-Z0-9]+)?/)
+  if (match) {
+    return `/api/attachments/${match[1]}`
+  }
+  return url
+}

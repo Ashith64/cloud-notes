@@ -89,6 +89,17 @@ def _note_json(note: Note, include_content: bool = False) -> dict:
             data["content"] = post.content
         except FileNotFoundError:
             data["content"] = ""
+        data["attachments"] = [
+            {
+                "id": att.id,
+                "filename": att.filename,
+                "content_type": att.content_type,
+                "size_bytes": att.size_bytes,
+                "url": f"/api/attachments/{att.id}",
+                "created_at": att.created_at.isoformat() if att.created_at else None,
+            }
+            for att in note.attachments
+        ]
     return data
 
 

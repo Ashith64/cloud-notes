@@ -7,6 +7,7 @@ import { Toaster } from 'sonner'
 import { ThemeProvider } from '@/providers/ThemeProvider'
 import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { AuthProvider, RequireAuth, RequireGuest } from '@/components/AuthGuard'
+import NetworkBanner from '@/components/NetworkBanner'
 import { queryClient } from '@/lib/queryClient'
 import { useAuthStore } from '@/store/authStore'
 
@@ -28,6 +29,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <BrowserRouter>
+            <NetworkBanner />
             <Routes>
               {/* Public: status (no auth required) */}
               <Route path="/status" element={<StatusPage />} />

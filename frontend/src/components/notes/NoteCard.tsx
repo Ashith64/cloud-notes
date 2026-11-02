@@ -133,9 +133,22 @@ export default function NoteCard({
                     onRestore?.(note.id)
                   }}
                   aria-label="Restore note"
-                  className="p-1 rounded-md text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
+                  title="Restore note"
+                  className="p-1 rounded-md text-[var(--muted-foreground)] hover:text-[var(--accent)] transition-colors"
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onPermanentDelete?.(note.id)
+                  }}
+                  aria-label="Delete forever"
+                  title="Delete forever"
+                  className="p-1 rounded-md text-[var(--muted-foreground)] hover:text-[var(--destructive)] transition-colors"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </div>
             )}

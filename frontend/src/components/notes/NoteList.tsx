@@ -172,6 +172,13 @@ export default function NoteList({
         )}
       </div>
 
+      {/* Trash notice per requirement 2 */}
+      {currentView === 'trash' && (
+        <div className="bg-[var(--muted)]/50 border-b border-[var(--border)] px-4 py-2 text-[11px] text-[var(--muted-foreground)]">
+          <span>Items in Trash are permanently removed after 30 days.</span>
+        </div>
+      )}
+
       {/* Note cards scroll area */}
       <div className="flex-1 overflow-y-auto p-2 space-y-2">
         {/* Skeleton loaders */}

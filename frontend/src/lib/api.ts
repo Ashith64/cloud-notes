@@ -1,3 +1,6 @@
+import { useNetworkStore } from '@/store/networkStore'
+import { useAuthStore } from '@/store/authStore'
+
 /** Typed error thrown by the API client */
 export class ApiError extends Error {
   readonly status: number
@@ -21,13 +24,30 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     ...(init.headers as Record<string, string> ?? {}),
   }
 
-  const res = await fetch(path, {
-    ...init,
-    credentials: 'include',
-    headers,
-  })
+  let res: Response
+  try {
+    res = await fetch(path, {
+      ...init,
+      credentials: 'include',
+      headers,
+    })
+    useNetworkStore.getState().setIsOffline(false)
+  } catch (err) {
+    useNetworkStore.getState().setIsOffline(true)
+    throw err
+  }
 
   if (!res.ok) {
+    if (
+      res.status === 401 &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/login') &&
+      path !== '/api/auth/me'
+    ) {
+      useAuthStore.getState().setUser(null)
+      window.location.href = '/login?expired=1'
+    }
+
     let code = 'unknown_error'
     let message = `HTTP ${res.status}`
     let bodyData: unknown = null

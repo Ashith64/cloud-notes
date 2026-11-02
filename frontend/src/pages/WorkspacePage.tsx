@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams, Outlet } from 'react-router-dom'
 import {
   FileText,
@@ -20,7 +20,6 @@ import {
   MoreHorizontal,
   Pencil,
   LogOut,
-  X,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -38,6 +37,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
+import CommandPalette from '@/components/CommandPalette'
 import { useTheme } from '@/providers/ThemeProvider'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/lib/api'
@@ -395,9 +395,6 @@ export default function WorkspacePage() {
   const { user, setUser } = useAuthStore()
   const queryClient = useQueryClient()
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const searchInputRef = useRef<HTMLInputElement>(null)
-
-  const searchQuery = searchParams.get('q') || ''
 
   const handleLogout = async () => {
     try {
@@ -439,20 +436,27 @@ export default function WorkspacePage() {
     }
   }
 
-  // Global keyboard shortcuts (Cmd+N for new note, Cmd+K for search)
+  const isMac = typeof window !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform)
+  const modKey = isMac ? '⌘' : 'Ctrl+'
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
+
+  // Global keyboard shortcuts (Cmd+N for new note, Cmd+K for search palette, Cmd+Shift+L for theme)
   useEffect(() => {
     const handleGlobalShortcuts = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'n' && !e.shiftKey) {
         e.preventDefault()
         handleCreateNewNote()
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault()
-        searchInputRef.current?.focus()
+        setCommandPaletteOpen((prev) => !prev)
+      } else if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault()
+        cycleTheme()
       }
     }
     window.addEventListener('keydown', handleGlobalShortcuts)
     return () => window.removeEventListener('keydown', handleGlobalShortcuts)
-  }, [searchParams])
+  }, [searchParams, cycleTheme])
 
   const ThemeIcon = resolvedTheme === 'dark' ? Moon : Sun
   const initials = user?.name
@@ -467,6 +471,24 @@ export default function WorkspacePage() {
   return (
     <TooltipProvider delayDuration={400}>
       <div className="flex h-screen overflow-hidden bg-[var(--background)]">
+        {/* Command Palette (Ctrl/Cmd+K) */}
+        <CommandPalette
+          open={commandPaletteOpen}
+          onOpenChange={setCommandPaletteOpen}
+          onSelectNote={(noteId) => {
+            const params = new URLSearchParams(searchParams)
+            params.set('note', noteId)
+            setSearchParams(params)
+          }}
+          onCreateNote={handleCreateNewNote}
+          onToggleTheme={cycleTheme}
+          onSelectNotebook={(nbId) => {
+            const params = new URLSearchParams()
+            params.set('notebook_id', String(nbId))
+            setSearchParams(params)
+          }}
+        />
+
         {/* Desktop Sidebar — 248px fixed width (C2), hidden below 1024px */}
         <aside className="hidden lg:flex w-[248px] flex-shrink-0 flex-col border-r border-[var(--border)] bg-[var(--sidebar)]">
           <SidebarNav />
@@ -493,41 +515,25 @@ export default function WorkspacePage() {
               </SheetTrigger>
             </Sheet>
 
-            {/* Live Search Input */}
-            <div className="flex flex-1 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 h-8 max-w-sm text-sm text-[var(--foreground)]">
-              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" strokeWidth={1.75} />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="Search notes…"
-                value={searchQuery}
-                onChange={(e) => {
-                  const val = e.target.value
-                  const params = new URLSearchParams(searchParams)
-                  if (val) params.set('q', val)
-                  else params.delete('q')
-                  setSearchParams(params)
-                }}
-                className="w-full bg-transparent border-none outline-none placeholder:text-[var(--muted-foreground)] text-xs sm:text-sm"
-              />
-              {searchQuery ? (
+            {/* Top Search Button / Input (opens Command Palette per requirement 3) */}
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
-                  onClick={() => {
-                    const params = new URLSearchParams(searchParams)
-                    params.delete('q')
-                    setSearchParams(params)
-                  }}
-                  className="text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
-                  aria-label="Clear search"
+                  type="button"
+                  onClick={() => setCommandPaletteOpen(true)}
+                  className="flex flex-1 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 h-8 max-w-sm text-xs sm:text-sm text-[var(--muted-foreground)] hover:border-[var(--accent)] transition-colors text-left"
+                  aria-label="Open search and command palette"
+                  data-testid="search-palette-trigger"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <Search className="h-3.5 w-3.5 shrink-0 text-[var(--muted-foreground)]" strokeWidth={1.75} />
+                  <span className="flex-1 truncate">Search notes…</span>
+                  <kbd className="ml-auto hidden sm:inline-flex h-5 items-center rounded border border-[var(--border)] bg-[var(--muted)] px-1.5 font-mono text-[10px] text-[var(--muted-foreground)]">
+                    {modKey}K
+                  </kbd>
                 </button>
-              ) : (
-                <kbd className="ml-auto hidden sm:inline-flex h-5 items-center rounded border border-[var(--border)] bg-[var(--muted)] px-1.5 font-mono text-[10px] text-[var(--muted-foreground)]">
-                  ⌘K
-                </kbd>
-              )}
-            </div>
+              </TooltipTrigger>
+              <TooltipContent>Search notes ({modKey}K)</TooltipContent>
+            </Tooltip>
 
             {/* Right Action Icons */}
             <div className="flex items-center gap-1.5 ml-auto">
@@ -544,7 +550,7 @@ export default function WorkspacePage() {
                     <span>New note</span>
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>New note (⌘N)</TooltipContent>
+                <TooltipContent>New note ({modKey}N)</TooltipContent>
               </Tooltip>
 
               <Button
@@ -573,7 +579,7 @@ export default function WorkspacePage() {
                     )}
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Theme: {theme}</TooltipContent>
+                <TooltipContent>Toggle theme ({modKey}⇧L)</TooltipContent>
               </Tooltip>
 
               {/* Avatar menu */}

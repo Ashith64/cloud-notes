@@ -48,6 +48,11 @@ def create_app(config_class=Config):
     def health_check():
         return jsonify({"status": "ok", "version": app.config.get("APP_VERSION", "0.1.0")}), 200
 
+    @app.route("/api/user/storage", methods=["GET"])
+    def user_storage():
+        from .routes.auth import storage_usage
+        return storage_usage()
+
     # ------------------------------------------------------------------
     # Global JSON error handlers  (spec D5 error format)
     # ------------------------------------------------------------------

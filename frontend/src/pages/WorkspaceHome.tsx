@@ -264,6 +264,19 @@ export default function WorkspaceHome() {
           onEmptyTrash={handleEmptyTrash}
           onCreateNote={handleCreateNote}
         />
+
+        {/* Floating + button on phone when viewing list per requirement 6 */}
+        {!activeNoteId && (
+          <button
+            type="button"
+            onClick={handleCreateNote}
+            className="sm:hidden fixed bottom-6 right-6 h-14 w-14 rounded-full shadow-xl bg-[var(--accent)] text-white hover:bg-[var(--accent)]/90 flex items-center justify-center z-20 transition-transform active:scale-95"
+            aria-label="Create note"
+            data-testid="mobile-floating-plus"
+          >
+            <Plus className="h-6 w-6" strokeWidth={2} />
+          </button>
+        )}
       </div>
 
       {/* Note Editor pane — takes remaining space, hidden on mobile when no note selected */}
@@ -308,6 +321,8 @@ export default function WorkspaceHome() {
                 queryClient.invalidateQueries({ queryKey: ['notes'] })
               }}
               onDeleteNote={handleDeleteNote}
+              onRestoreNote={handleRestoreNote}
+              onPermanentDeleteNote={handlePermanentDeleteNote}
               onToggleArchive={handleToggleArchive}
               onMoveNotebook={handleMoveNotebook}
             />

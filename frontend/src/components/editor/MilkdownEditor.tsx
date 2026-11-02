@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Crepe } from '@milkdown/crepe'
+import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { resolveAttachmentDomUrl, toStorageMarkdown } from '@/lib/markdown'
 
 interface MilkdownEditorProps {
   initialContent: string
@@ -37,14 +39,25 @@ export default function MilkdownEditor({
           ? {
               [Crepe.Feature.ImageBlock]: {
                 onUpload: async (file: File) => {
-                  const formData = new FormData()
-                  formData.append('file', file)
-                  formData.append('note_id', noteId)
-                  const res = await api.post<{ id: string; ref: string; url: string }>(
-                    '/api/attachments',
-                    formData
-                  )
-                  return res.url || `/api/attachments/${res.id}`
+                  const toastId = toast.loading(`Uploading ${file.name || 'image'}…`)
+                  try {
+                    const formData = new FormData()
+                    formData.append('file', file)
+                    formData.append('note_id', noteId)
+                    const res = await api.post<{ id: string; ref: string; url: string }>(
+                      '/api/attachments',
+                      formData
+                    )
+                    toast.success('Image uploaded', { id: toastId })
+                    // Store the stable reference in markdown: attachments/<id>.<ext>
+                    return res.ref || `attachments/${res.id}.png`
+                  } catch (err: any) {
+                    toast.error(err?.message || 'Failed to upload image', { id: toastId })
+                    throw err
+                  }
+                },
+                proxyDomURL: (url: string) => {
+                  return resolveAttachmentDomUrl(url)
                 },
               },
             }
@@ -59,7 +72,7 @@ export default function MilkdownEditor({
     crepe.on((listener) => {
       listener.markdownUpdated((_ctx, markdown) => {
         if (active) {
-          onChangeRef.current(markdown)
+          onChangeRef.current(toStorageMarkdown(markdown))
         }
       })
     })

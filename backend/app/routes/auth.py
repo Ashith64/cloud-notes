@@ -13,8 +13,10 @@ from functools import wraps
 import bcrypt
 import jwt
 from flask import Blueprint, current_app, g, jsonify, request
+from sqlalchemy import func
 
-from ..models import User
+from ..models import Attachment, Note, User
+from ..storage.factory import get_storage
 
 log = logging.getLogger(__name__)
 
@@ -230,6 +232,38 @@ def logout():
 def me():
     user: User = g.current_user
     return jsonify({"id": user.id, "email": user.email, "name": user.name}), 200
+
+
+@auth_bp.route("/storage", methods=["GET"])
+@login_required
+def storage_usage():
+    user_id = g.current_user.id
+    db = _db()
+
+    att_size = (
+        db.query(func.coalesce(func.sum(Attachment.size_bytes), 0))
+        .filter_by(user_id=user_id)
+        .scalar()
+        or 0
+    )
+
+    notes = db.query(Note).filter_by(user_id=user_id).all()
+    storage = get_storage()
+    notes_size = 0
+    for note in notes:
+        try:
+            raw = storage.get_text(note.storage_key)
+            notes_size += len(raw.encode("utf-8"))
+        except Exception:
+            notes_size += len((note.search_text or "").encode("utf-8"))
+
+    total_bytes = att_size + notes_size
+    return jsonify({
+        "notes_bytes": notes_size,
+        "attachments_bytes": att_size,
+        "total_bytes": total_bytes,
+        "limit_bytes": 100 * 1024 * 1024,
+    }), 200
 
 
 @auth_bp.route("/change-password", methods=["POST"])

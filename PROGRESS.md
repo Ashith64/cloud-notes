@@ -226,6 +226,71 @@ pytest tests/ -v             # run all 137 tests
     - All 137 backend pytest tests continue to pass 100%.
     - Frontend TypeScript check and Vite production build pass cleanly with zero errors.
 
+- **Stage 5B: Attachments, Trash, Search, Settings, Shortcuts & Phone Layout**
+  - **Attachments** (`MilkdownEditor.tsx`, `NoteEditor.tsx`, `markdown.ts`, `notes.py`):
+    - Configured Crepe's image block: dropping, pasting or choosing an image uploads via `POST /api/attachments`, displays live toast progress state, and inserts image into the document.
+    - Markdown strictly stores stable reference `attachments/<id>.<ext>`.
+    - Integrated Crepe's native `proxyDomURL` hook to resolve `attachments/<id>.<ext>` to `/api/attachments/<id>` in the DOM.
+    - Added `toStorageMarkdown` / `resolveAttachmentDomUrl` bidirectional transform to guarantee temporary links or raw URLs are never stored.
+    - Added "Attach PDF" button in the editor; uploaded PDFs are displayed as downloadable file chips under the editor with filename, formatted size, and direct download links.
+    - Updated backend `GET /api/notes/<id>` to include linked attachment metadata.
+  - **Trash View & Operations** (`NoteList.tsx`, `NoteCard.tsx`, `WorkspaceHome.tsx`):
+    - Trash list displays informative banner: "Items in Trash are permanently removed after 30 days."
+    - Cards in Trash view display both "Restore" and "Delete forever" actions.
+    - "Empty Trash" button opens a confirmation dialog before permanent deletion.
+    - Moving note to trash shows Sonner toast "Moved to Trash" with "Undo" button for 6 seconds; clicking Undo immediately restores the note.
+    - Trashed notes opened in editor display a warning banner with Restore and Delete forever action buttons and read-only editor mode.
+  - **Search & Command Palette** (`CommandPalette.tsx`, `WorkspacePage.tsx`):
+    - Top search bar triggers Command Palette (`⌘K` / `Ctrl+K`).
+    - Live note search with 200 ms debounce, displaying title, snippet, and match highlighting via `<mark>`.
+    - Empty state shows 5 recent notes and quick actions: New note (`⌘N`), Toggle theme (`⌘⇧L`), Go to notebook, Open System Status, and Open Settings.
+    - Pressing Enter or clicking a result immediately opens the note.
+  - **Settings Page per C3.4** (`SettingsPage.tsx`, `auth.py`, `backend/app/__init__.py`):
+    - Backend endpoint `GET /api/user/storage` calculates real bytes used (summing actual Markdown storage files and attachment sizes from DB).
+    - Progress bar styled with design tokens against 100 MB display limit with detailed breakdowns.
+    - Change password form with client-side validation (minimum 8 characters, confirmation match) submitting to `POST /api/auth/change-password`.
+    - Visual theme picker (System, Light, Dark).
+    - Export all as `.zip` download link (`/api/export`).
+    - Added "Download as Markdown" item to note context and 3-dot menus.
+  - **Keyboard Shortcuts & Tooltips** (`WorkspacePage.tsx`, `CommandPalette.tsx`):
+    - `Ctrl/Cmd+N`: New note.
+    - `Ctrl/Cmd+K`: Open command palette.
+    - `Ctrl/Cmd+Shift+L`: Toggle theme between light and dark.
+    - Tooltip hints shown on search bar, new note button, and theme switcher; shortcuts displayed on command palette actions.
+  - **Phone Layout per C2** (`WorkspaceHome.tsx`, `WorkspacePage.tsx`):
+    - Phone (< 640px) shows list first; selecting a note opens editor full width.
+    - Editor header includes back arrow to return to note list.
+    - Prominent floating `+` button in bottom-right (`bottom-6 right-6`) on phone list; hidden when editor or drawer is open to prevent overlap.
+    - Hamburger button in top bar opens sidebar navigation drawer.
+    - Touch-friendly tap targets (minimum 36-44px).
+  - **Network Resilience & Session Expiration** (`NetworkBanner.tsx`, `networkStore.ts`, `api.ts`, `LoginPage.tsx`):
+    - Quiet banner displayed at top when API cannot be reached: "Can't reach the server. Retrying...". Automatically retries `/api/health` and reconnects queries.
+    - HTTP 401 on authenticated routes cleanly redirects to `/login?expired=1` with toast and error notice: "Your session has expired. Please log in again."
+  - **Verification & Testing**:
+    - Automated headless Edge verification test (`frontend/verify-stage5b.js`) verified all user journeys across 3 widths and both themes:
+      - Demo account login & full workspace view.
+      - Command palette live search with 200ms debounce & match highlighting.
+      - Image and PDF attachment upload & file chip rendering.
+      - Soft delete with 6-second "Moved to Trash" Undo toast.
+      - Trash view with 30-day notice, Restore, Delete forever, and Empty Trash dialog.
+      - Settings storage progress bar, password validation, theme switcher, and zip export.
+      - Tablet layout (768px) with drawer navigation.
+      - Mobile layout (375px) with list-first view, floating `+` button, touch editor, and back navigation.
+      - Network resilience offline banner.
+      - Fresh user registration and empty state verification.
+    - Captured 9 high-resolution screenshots into `docs/screenshots/`:
+      - `stage5b-desktop-search-palette.png`
+      - `stage5b-desktop-editor-attachments.png`
+      - `stage5b-desktop-trash-view.png`
+      - `stage5b-settings-storage-light.png`
+      - `stage5b-settings-storage-dark.png`
+      - `stage5b-tablet-view.png`
+      - `stage5b-mobile-list-floating.png`
+      - `stage5b-mobile-editor-touch.png`
+      - `stage5b-network-banner.png`
+    - All 140 backend pytest tests continue to pass 100% in 33.60s.
+    - Frontend TypeScript check and Vite production build pass cleanly with zero errors.
+
 ## How to Run
 
 ```sh
@@ -238,7 +303,7 @@ cd frontend
 npm run dev
 
 # Run automated browser verification test
-node verify-stage5a.js
+node run-verification-5b.js
 
 # Run backend test suite
 cd backend
@@ -247,9 +312,15 @@ cd backend
 
 ## Next
 
-- Stage 5B: Polish & Search / Command Palette (⌘K full integration, fuzzy search, attachment upload drag-drop in editor, keyboard shortcuts).
+- Stage 6: Deployment & Infrastructure as Code (AWS CloudFormation template, single Docker image build, ECS/EC2 Auto Scaling, ALB, RDS MySQL, CloudWatch alarms).
 
 ## Decisions
+
+- Integrated Crepe's native `proxyDomURL` hook to resolve `attachments/<id>.<ext>` references into `/api/attachments/<id>` in the DOM while keeping stable references in stored Markdown.
+- Added `toStorageMarkdown` transform ensuring no temporary URLs or absolute domain URLs ever leak into saved Markdown.
+- Created `GET /api/user/storage` calculating exact byte counts from storage files and database attachment records against the 100 MB progress bar display limit.
+- Mounted floating `+` button on mobile list view with condition `!activeNoteId` to prevent overlapping editor toolbar and footer controls.
+- Configured network status monitor with exponential polling on `/api/health` and clean redirection to `/login?expired=1` on 401 session expiration without retry loops.
 
 - Preserved backend port 8000 in `backend/wsgi.py` and configured Vite proxy to target `http://127.0.0.1:8000` to maintain consistency with Stage 0-3 verifications and single-container production specification.
 - Used `@tailwindcss/vite` plugin with Tailwind CSS v4 and CSS theme variables for seamless design token integration with shadcn/ui components.

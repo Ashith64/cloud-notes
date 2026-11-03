@@ -131,27 +131,14 @@ def test_me_with_cookie(client):
     assert rv2.get_json()["email"] == "me@example.com"
 
 
-def test_me_without_cookie(client):
-    # A brand-new client with no cookies in its jar
-    from app import create_app
-    from app.db import init_db
-    import tempfile
-
-    db_path = tempfile.mktemp(suffix=".db")
-    fresh_app = create_app({
-        "TESTING": True,
-        "DATABASE_URL": f"sqlite:///{db_path}",
-        "SECRET_KEY": "test-secret-key-exactly-32-bytes",
-        "JWT_EXPIRY_DAYS": 1,
-        "STORAGE_BACKEND": "local",
-        "LOCAL_STORAGE_PATH": tempfile.mkdtemp(),
-    })
-    with fresh_app.app_context():
-        init_db()
-    with fresh_app.test_client() as c:
+def test_me_without_cookie(app):
+    """A fresh test client with no cookie must get 401."""
+    # Use the session-scoped app fixture so the test is DB-agnostic
+    # (works with both SQLite and MySQL).
+    with app.test_client() as c:
+        # Do NOT set any cookie — just hit the protected endpoint.
         rv = c.get("/api/auth/me")
         assert rv.status_code == 401
-    # SQLite on Windows holds the file; skip explicit unlink
 
 
 # ---------------------------------------------------------------------------

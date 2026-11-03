@@ -1,0 +1,53 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Environment and secrets — never bake into the image
+.env
+.env.*
+!.env.example
+
+# Python virtual environments and caches
+.venv
+backend/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.pytest_cache
+backend/.pytest_cache
+
+# Node dependencies and local build outputs
+node_modules
+frontend/node_modules
+# dist is rebuilt inside Docker by Stage 1
+frontend/dist
+
+# Local data / storage (use a named volume instead)
+local_data
+backend/local_data
+
+# Development databases
+backend/*.db
+*.db
+
+# Documentation and screenshots (not needed in image)
+docs/screenshots
+loadtest
+
+# Editor and OS artefacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+**/.idea
+**/.vscode
+
+# Antigravity / AI files
+.gemini
+AGENTS.md
+
+# Verification scripts (dev only)
+frontend/verify-stage*.js
+frontend/run-verification*.js

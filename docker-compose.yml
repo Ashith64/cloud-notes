@@ -1,0 +1,58 @@
+services:
+  # ----------------------------------------------------------------
+  # MySQL 8 database
+  # ----------------------------------------------------------------
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: cloudnotes
+      MYSQL_USER: cloudnotes
+      MYSQL_PASSWORD: cloudnotes_secret
+    ports:
+      # Expose to host so you can run the test suite against MySQL locally:
+      # $env:TEST_DATABASE_URL="mysql+pymysql://cloudnotes:cloudnotes_secret@127.0.0.1:3306/cloudnotes?charset=utf8mb4"
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # Use 127.0.0.1 rather than localhost to avoid the Unix-socket path.
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -u$$MYSQL_USER -p$$MYSQL_PASSWORD --silent",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  # ----------------------------------------------------------------
+  # Cloud Notes application
+  # ----------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: mysql+pymysql://cloudnotes:cloudnotes_secret@mysql:3306/cloudnotes?charset=utf8mb4
+      STORAGE_BACKEND: local
+      LOCAL_STORAGE_PATH: /app/local_data
+      # Override this with a strong random value in production.
+      SECRET_KEY: dev-insecure-secret-change-in-production
+      # Keep cookies non-Secure so http://localhost:8000 works.
+      COOKIE_SECURE: "false"
+      FLASK_APP: wsgi.py
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persistent storage for note files and attachments.
+      - app_storage:/app/local_data
+    depends_on:
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mysql_data:
+  app_storage:

@@ -43,16 +43,21 @@ def _db():
 
 
 def _set_cookie(response, token: str) -> None:
-    """Attach the JWT cookie to *response*."""
-    debug = current_app.debug
+    """Attach the JWT cookie to *response*.
+
+    The Secure flag is controlled by the COOKIE_SECURE config key (D3.8):
+      - production (HTTPS):  set COOKIE_SECURE=true in the environment.
+      - Docker Compose/dev (HTTP): leave unset or set to false.
+    Tests always send over HTTP so Secure is also forced off when TESTING=True.
+    """
     testing = current_app.config.get("TESTING", False)
+    secure = current_app.config.get("COOKIE_SECURE", False) and not testing
     response.set_cookie(
         _COOKIE_NAME,
         token,
         httponly=True,
         samesite="Lax",
-        # Secure flag only in production (not in debug or test environments).
-        secure=(not debug and not testing),
+        secure=secure,
         max_age=int(current_app.config["JWT_EXPIRY_DAYS"]) * 86400,
         path="/",
     )

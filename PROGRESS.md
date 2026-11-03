@@ -435,6 +435,7 @@ docker compose up --build
     - **CloudWatch Dashboard** (`AppDashboard`): Named `cloudnotes`, 8 widgets (ASG CPU, in-service instances, ALB request count, ALB p99 response time, ALB 5XX errors, ALB healthy hosts, RDS CPU, RDS connections).
     - **Outputs**: `LoadBalancerUrl`, `DashboardUrl`, `DbEndpoint` — all exported.
     - All resources tagged `Project=cloudnotes`.
+    - **Stack Cleanup**: Failed initial deployment record in `ROLLBACK_COMPLETE` was cleanly deleted after confirming all physical resources were previously torn down. Ready for clean deployment.
   - **Validation**:
     - `cfn-lint infra/02-app.yaml --region ap-southeast-2` — **0 errors, 0 warnings**.
     - `aws cloudformation validate-template` — **✅ valid**, confirms `CAPABILITY_NAMED_IAM`.

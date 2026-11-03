@@ -299,24 +299,37 @@ docker compose up --build
 # Status dashboard at http://localhost:8000/status
 ```
 
-- **Stage 9: Secrets Architecture & ECR Image Push Scripts**
-  - **Architecture Decision — No SSM create-secrets script**: The original Stage 9 guide describes generating `/cloudnotes/db-password` and `/cloudnotes/jwt-secret` in SSM Parameter Store. This step is **not applicable to our architecture**. Our Stage 7 backend (`backend/app/config.py`) resolves secrets via `DB_SECRET_ARN` and `APP_SECRET_ARN` using AWS Secrets Manager. Both secrets are created and managed by CloudFormation/RDS (`AppSecret` + `ManageMasterUserPassword: true`) — no additional SSM parameters are required or created. Creating them would introduce unused, orphaned credentials conflicting with the established interface.
+- **Stage 9: Secrets Creation & ECR Image Push Scripts**
+  - **`scripts/create-secrets.ps1`** (PowerShell for Windows):
+    - Prerequisite check for `aws` CLI.
+    - Resolves AWS account ID dynamically via `aws sts get-caller-identity`.
+    - Generates 24-character alphanumeric database password and 48-character alphanumeric JWT secret locally via `[System.Security.Cryptography.RandomNumberGenerator]`.
+    - Stores them in AWS SSM Parameter Store as `SecureString` at `/cloudnotes/db-password` and `/cloudnotes/jwt-secret` using default region `ap-southeast-2`.
+    - Checks parameter existence with `aws ssm get-parameter` before creating, safely skipping any parameter that already exists.
+    - Never prints secret values to console output or logs; uses `[REDACTED]` log placeholders.
+    - Never writes secret values to any file on disk; clears memory variables immediately after execution.
+  - **`scripts/create-secrets.sh`** (Bash for Linux / macOS / WSL):
+    - Parallel implementation using POSIX shell and `LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom`.
+    - Configured with `set -euo pipefail`.
+    - Dynamically checks caller identity, verifies SSM parameter presence, creates `SecureString` parameters in `ap-southeast-2`, and unsets secret variables immediately.
   - **`scripts/push-image.ps1`** (PowerShell for Windows):
+    - Updated default region to `ap-southeast-2`.
     - Prerequisite checks for `git`, `docker`, and `aws` with clear failure messages.
     - Dynamically resolves AWS account ID via `aws sts get-caller-identity`.
-    - Dynamically resolves ECR repository URI from the `EcrRepositoryUri` CloudFormation stack output via `aws cloudformation describe-stacks`.
+    - Dynamically resolves ECR repository URI from CloudFormation stack output (`EcrRepositoryUri` or `RepositoryUri`) with fallback to `${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com/${RepoName}`.
     - Authenticates Docker to ECR via `aws ecr get-login-password | docker login --username AWS --password-stdin ...` — token is piped, never printed.
-    - Builds image with `--platform linux/amd64` targeting `t3.micro` x86_64 EC2 instances.
+    - Builds image with `--platform linux/amd64` targeting x86_64 EC2 instances.
     - Tags with short `git rev-parse --short HEAD` commit hash **and** `latest`.
-    - Pushes both tags and prints only image URIs, never credentials.
-    - Fails safely on any error; does not overwrite local project files.
+    - Pushes both tags and prints image tags and URIs.
   - **`scripts/push-image.sh`** (Bash for Linux / macOS / WSL):
-    - Identical logic to the PowerShell script; supports `--stack-name` and `--region` arguments.
-    - Uses `set -euo pipefail` for safe error propagation.
-  - **Tests** (`backend/tests/test_stage9.py`): 23 automated tests covering existence, no hard-coded account IDs, no secret echoing, ECR authentication pattern, `--platform linux/amd64`, two-tag push, prerequisite check presence, CloudFormation prerequisite documentation, ECR URI resolved from stack output, and `git rev-parse` tag sourcing.
-  - **README.md** (`README.md`): Added a comprehensive **Deploy to AWS** section covering the three-step deployment order (CloudFormation → image push → instance refresh), secret management rationale, and teardown instructions.
-  - **All 203 backend tests pass** (180 prior + 23 new Stage 9 tests) in 35.20s. No regressions.
-  - **Scripts not yet executed** — pending explicit user approval and a deployed CloudFormation stack.
+    - Updated default region to `ap-southeast-2`.
+    - Identical logic and flags supporting `--stack-name`, `--repo-name`, and `--region`.
+    - Uses `set -euo pipefail`.
+  - **Tests** (`backend/tests/test_stage9.py`):
+    - 17 automated tests covering existence, dynamic account ID lookup, no hardcoded account IDs or credentials, SSM SecureString parameter targets (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`), default region `ap-southeast-2`, skipping existing parameters, 24/48 character secret generation, no secret echoing or file writes, ECR login pattern, `--platform linux/amd64` build, two-tag push, and image tag printing.
+    - All 17 Stage 9 tests and all 206 backend tests pass cleanly.
+  - **Safety Compliance**:
+    - Neither script was executed. No AWS commands creating secrets or pushing images were run. All AWS commands are documented and displayed for manual review.
 
 - **Stage 8 (Foundation): Infrastructure Part 1 - Foundation Template (`infra/01-foundation.yaml`)**
   - **CloudFormation Foundation Template** (`infra/01-foundation.yaml`):
@@ -402,8 +415,9 @@ docker compose up --build
   - **Separate Security Group Ingress Rules**: Security group ingress rules are defined as standalone `AWS::EC2::SecurityGroupIngress` resources rather than inline properties. This decouples resource creation order and eliminates circular reference risks.
   - **Private Subnets for RDS**: Two private subnets across two AZs are associated with a dedicated route table having NO internet route (no default route, no NAT gateway), ensuring database isolation.
   - **S3 Bucket & ECR Naming**: S3 bucket is named `cloudnotes-{AccountId}-{Region}` with `DeletionPolicy: Delete`, full public access block, versioning, and AES256 encryption. ECR repository is named `cloudnotes` with `EmptyOnDelete: true`.
-- **No SSM create-secrets script**: The original Stage 9 guide's SSM parameter creation step is unnecessary for our Secrets Manager-based architecture. `DB_SECRET_ARN` is the RDS-managed master secret, and `APP_SECRET_ARN` is the CloudFormation `AppSecret`. Creating separate SSM parameters (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`) would create orphaned credentials the backend never reads.
-- **Scripts resolve ECR URI from CloudFormation outputs**: Both `push-image.ps1` and `push-image.sh` call `aws cloudformation describe-stacks` to obtain `EcrRepositoryUri`, ensuring no account ID or repository path is ever hard-coded.**: Extends the existing Stage 8A template to keep resource definitions, internal references (`!Ref`, `!GetAtt`), and security group rules cohesive without relying on fragile cross-stack imports.
+- **SSM Parameter Store Secrets for Stage 9**: `scripts/create-secrets.ps1` and `scripts/create-secrets.sh` generate cryptographically random alphanumeric strings (24 chars for database password, 48 chars for JWT secret) and store them in AWS Systems Manager Parameter Store as `SecureString` at `/cloudnotes/db-password` and `/cloudnotes/jwt-secret` in region `ap-southeast-2`. Existing parameters are detected with `aws ssm get-parameter` and safely skipped.
+- **Region ap-southeast-2 Alignment**: `scripts/create-secrets.ps1`, `scripts/create-secrets.sh`, `scripts/push-image.ps1`, and `scripts/push-image.sh` default to region `ap-southeast-2` (Sydney), with flag overrides available.
+- **Scripts resolve ECR URI dynamically**: Both `push-image.ps1` and `push-image.sh` call `aws cloudformation describe-stacks` to obtain `EcrRepositoryUri` (or `RepositoryUri`) if available, and gracefully fall back to `${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com/${RepoName}` with account ID obtained dynamically via `aws sts get-caller-identity`. No account ID or repository URI is ever hard-coded.
 - **Secrets Manager Integration Preserved**: Preserved Stage 7 AWS Secrets Manager pattern (`DB_SECRET_ARN`, `APP_SECRET_ARN`, `ManageMasterUserPassword: true`). Secrets are queried securely by the container via IAM instance role at startup, rather than passing raw credentials into UserData or template parameters.
 - **Capacity & Cost Safety**: `DesiredCapacity` and `MinCapacity` default to `0` in the CloudFormation template, ensuring that template syntax and resources can be created or validated without launching billable EC2 compute instances.
 - **Session Manager Access**: `AmazonSSMManagedInstanceCore` managed policy attached to `AppInstanceRole` enables AWS Systems Manager Session Manager, allowing SSH-free terminal access without opening port 22 or provisioning keypairs.

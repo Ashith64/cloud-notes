@@ -230,6 +230,40 @@
     - Template syntax and structure verified via Python AST and PyYAML parser.
     - **No resources deployed; template creation and validation only.**
 
+- **Stage 8 (Foundation): Infrastructure Part 1 - Foundation Template (`infra/01-foundation.yaml`)**
+  - **CloudFormation Foundation Template** (`infra/01-foundation.yaml`):
+    - Self-contained, zero-cost-to-write infrastructure template defining permanent, shared foundation resources.
+    - **Parameters**: `ProjectName` (default `cloudnotes`), `AlertEmail` (no default; provided via command line).
+    - **VPC & Internet Gateway**: Dedicated VPC `10.0.0.0/16` with DNS resolution and hostnames enabled, internet gateway attached, and a public route table routing `0.0.0.0/0` to the gateway.
+    - **Subnets across 2 AZs**:
+      - 2 Public Subnets: `10.0.1.0/24` (AZ-0) and `10.0.2.0/24` (AZ-1) with `MapPublicIpOnLaunch: true`.
+      - 2 Private Subnets: `10.0.11.0/24` (AZ-0) and `10.0.12.0/24` (AZ-1) mapped to a private route table with **NO internet route** (reserved strictly for the database).
+      - **Zero NAT Gateways, zero VPC endpoints, and zero Elastic IPs** provisioned.
+    - **Security Groups & Separate Ingress Resources**:
+      - `AlbSecurityGroup`: Port 80 open to the internet (`0.0.0.0/0`).
+      - `AppSecurityGroup`: Port 8000 allowed only from `AlbSecurityGroup`.
+      - `DbSecurityGroup`: Port 3306 allowed only from `AppSecurityGroup`.
+      - No inline cross-references; ingress rules defined as separate `AWS::EC2::SecurityGroupIngress` resources.
+      - No SSH (port 22) permitted anywhere.
+    - **S3 Bucket** (`NotesBucket`):
+      - Name: `cloudnotes-{AccountId}-{Region}`.
+      - Public access block fully enabled, versioning enabled, AES256 server-side encryption by default.
+      - Lifecycle rules: expires noncurrent versions after 30 days and aborts incomplete multipart uploads after 7 days.
+      - `DeletionPolicy: Delete`, `UpdateReplacePolicy: Delete`.
+    - **ECR Repository** (`EcrRepository`):
+      - Name: `cloudnotes`.
+      - Scan on push enabled, mutable image tags, lifecycle policy retaining the last 5 images, `EmptyOnDelete: true`, `DeletionPolicy: Delete`.
+    - **SNS Alert Topic & Email Subscription** (`AlertsTopic`, `AlertsEmailSubscription`):
+      - Topic named `cloudnotes-alerts`, subscription delivers alerts to `AlertEmail`.
+    - **Outputs with Named Exports** (`{ProjectName}-<Name>`):
+      - `VpcId`, `PublicSubnetIds`, `PrivateSubnetIds`, `AlbSecurityGroupId`, `AppSecurityGroupId`, `DbSecurityGroupId`, `BucketName`, `RepositoryUri`, `AlertTopicArn`.
+    - All resources tagged with `Project=cloudnotes`.
+  - **Testing & Verification**:
+    - Installed `cfn-lint` and `awscli` in `backend/.venv`.
+    - Verified template using `cfn-lint infra/01-foundation.yaml` — 0 errors, 0 warnings.
+    - Created `backend/tests/test_stage8_foundation.py` with 9 automated tests.
+    - All 212 project tests pass cleanly (100%).
+
 ## How to Run
 
 ### Local Development
@@ -284,6 +318,40 @@ docker compose up --build
   - **All 203 backend tests pass** (180 prior + 23 new Stage 9 tests) in 35.20s. No regressions.
   - **Scripts not yet executed** — pending explicit user approval and a deployed CloudFormation stack.
 
+- **Stage 8 (Foundation): Infrastructure Part 1 - Foundation Template (`infra/01-foundation.yaml`)**
+  - **CloudFormation Foundation Template** (`infra/01-foundation.yaml`):
+    - Self-contained, zero-cost-to-write infrastructure template defining permanent, shared foundation resources.
+    - **Parameters**: `ProjectName` (default `cloudnotes`), `AlertEmail` (no default; provided via command line).
+    - **VPC & Internet Gateway**: Dedicated VPC `10.0.0.0/16` with DNS resolution and hostnames enabled, internet gateway attached, and a public route table routing `0.0.0.0/0` to the gateway.
+    - **Subnets across 2 AZs**:
+      - 2 Public Subnets: `10.0.1.0/24` (AZ-0) and `10.0.2.0/24` (AZ-1) with `MapPublicIpOnLaunch: true`.
+      - 2 Private Subnets: `10.0.11.0/24` (AZ-0) and `10.0.12.0/24` (AZ-1) mapped to a private route table with **NO internet route** (reserved strictly for the database).
+      - **Zero NAT Gateways, zero VPC endpoints, and zero Elastic IPs** provisioned.
+    - **Security Groups & Separate Ingress Resources**:
+      - `AlbSecurityGroup`: Port 80 open to the internet (`0.0.0.0/0`).
+      - `AppSecurityGroup`: Port 8000 allowed only from `AlbSecurityGroup`.
+      - `DbSecurityGroup`: Port 3306 allowed only from `AppSecurityGroup`.
+      - No inline cross-references; ingress rules defined as separate `AWS::EC2::SecurityGroupIngress` resources.
+      - No SSH (port 22) permitted anywhere.
+    - **S3 Bucket** (`NotesBucket`):
+      - Name: `cloudnotes-{AccountId}-{Region}`.
+      - Public access block fully enabled, versioning enabled, AES256 server-side encryption by default.
+      - Lifecycle rules: expires noncurrent versions after 30 days and aborts incomplete multipart uploads after 7 days.
+      - `DeletionPolicy: Delete`, `UpdateReplacePolicy: Delete`.
+    - **ECR Repository** (`EcrRepository`):
+      - Name: `cloudnotes`.
+      - Scan on push enabled, mutable image tags, lifecycle policy retaining the last 5 images, `EmptyOnDelete: true`, `DeletionPolicy: Delete`.
+    - **SNS Alert Topic & Email Subscription** (`AlertsTopic`, `AlertsEmailSubscription`):
+      - Topic named `cloudnotes-alerts`, subscription delivers alerts to `AlertEmail`.
+    - **Outputs with Named Exports** (`{ProjectName}-<Name>`):
+      - `VpcId`, `PublicSubnetIds`, `PrivateSubnetIds`, `AlbSecurityGroupId`, `AppSecurityGroupId`, `DbSecurityGroupId`, `BucketName`, `RepositoryUri`, `AlertTopicArn`.
+    - All resources tagged with `Project=cloudnotes`.
+  - **Testing & Verification**:
+    - Installed `cfn-lint` and `awscli` in `backend/.venv`.
+    - Verified template using `cfn-lint infra/01-foundation.yaml` — 0 errors, 0 warnings.
+    - Created `backend/tests/test_stage8_foundation.py` with 9 automated tests.
+    - All 212 project tests pass cleanly (100%).
+
 ## How to Run
 
 ### Local Development
@@ -329,6 +397,11 @@ docker compose up --build
 
 ## Decisions
 
+- **Stage 8 Foundation Template Decisions (`infra/01-foundation.yaml`)**:
+  - **Servers in Public Subnets**: Servers reside in public subnets so they can reach ECR, SSM, and S3 without incurring NAT Gateway costs ($32+/month). Network isolation is strictly enforced at layer 4: `AppSecurityGroup` only accepts ingress on port 8000 from `AlbSecurityGroup`; no direct internet ingress is permitted, and port 22 (SSH) is completely omitted.
+  - **Separate Security Group Ingress Rules**: Security group ingress rules are defined as standalone `AWS::EC2::SecurityGroupIngress` resources rather than inline properties. This decouples resource creation order and eliminates circular reference risks.
+  - **Private Subnets for RDS**: Two private subnets across two AZs are associated with a dedicated route table having NO internet route (no default route, no NAT gateway), ensuring database isolation.
+  - **S3 Bucket & ECR Naming**: S3 bucket is named `cloudnotes-{AccountId}-{Region}` with `DeletionPolicy: Delete`, full public access block, versioning, and AES256 encryption. ECR repository is named `cloudnotes` with `EmptyOnDelete: true`.
 - **No SSM create-secrets script**: The original Stage 9 guide's SSM parameter creation step is unnecessary for our Secrets Manager-based architecture. `DB_SECRET_ARN` is the RDS-managed master secret, and `APP_SECRET_ARN` is the CloudFormation `AppSecret`. Creating separate SSM parameters (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`) would create orphaned credentials the backend never reads.
 - **Scripts resolve ECR URI from CloudFormation outputs**: Both `push-image.ps1` and `push-image.sh` call `aws cloudformation describe-stacks` to obtain `EcrRepositoryUri`, ensuring no account ID or repository path is ever hard-coded.**: Extends the existing Stage 8A template to keep resource definitions, internal references (`!Ref`, `!GetAtt`), and security group rules cohesive without relying on fragile cross-stack imports.
 - **Secrets Manager Integration Preserved**: Preserved Stage 7 AWS Secrets Manager pattern (`DB_SECRET_ARN`, `APP_SECRET_ARN`, `ManageMasterUserPassword: true`). Secrets are queried securely by the container via IAM instance role at startup, rather than passing raw credentials into UserData or template parameters.
@@ -349,5 +422,5 @@ docker compose up --build
 
 - **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.
-- **AWS CLI & cfn-lint**: `aws` CLI and `cfn-lint` are not installed locally on this host environment. CloudFormation template validity verified via automated Python AST test suites only. AWS remote validation (`aws cloudformation validate-template`) is pending CLI installation.
+- **AWS CLI & cfn-lint**: `cfn-lint` and `awscli` are now installed in `backend/.venv`. `infra/01-foundation.yaml` validated with 0 errors via `cfn-lint`. Live CloudFormation deployment requires active AWS credentials.
 - `local_data/` is created on first storage write, not on startup (matches lazy initialization).

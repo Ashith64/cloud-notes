@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Notes - Stage 8 Foundation Infrastructure Template.
+  Provisions foundational, cheap, and permanent networking and shared resources:
+  VPC, public/private subnets across two AZs, route tables, internet gateway,
+  decoupled security groups (ALB -> App -> DB), private encrypted S3 bucket,
+  ECR repository with image retention, and an SNS alerts topic.
+  Servers sit in public subnets to access ECR/SSM/S3 without a NAT Gateway,
+  strictly shielded by AppSg which only permits ingress from the ALB.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: cloudnotes
+    Description: Name of the project used for naming resources and export values.
+    AllowedPattern: "^[a-z0-9-]+$"
+    ConstraintDescription: Must contain only lowercase alphanumeric characters and hyphens.
+
+  AlertEmail:
+    Type: String
+    Description: Email address for operational alerts and CloudWatch notifications.
+    AllowedPattern: "^[^@]+@[^@]+\\.[^@]+$"
+    ConstraintDescription: Must be a valid email address.
+
+Resources:
+  # ============================================================================
+  # 1. VPC & Internet Gateway
+  # ============================================================================
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-vpc"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-igw"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  # ============================================================================
+  # 2. Public Subnets & Public Route Table
+  # ============================================================================
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-rt"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-subnet-1"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-public-subnet-2"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  # ============================================================================
+  # 3. Private Subnets & Private Route Table (No Internet Route)
+  # ============================================================================
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-private-rt"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.11.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-private-subnet-1"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.12.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-private-subnet-2"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  # ============================================================================
+  # 4. Security Groups (Decoupled with Separate Ingress Rules, No SSH)
+  # ============================================================================
+  AlbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-alb-sg"
+      GroupDescription: !Sub "Security group for ${ProjectName} ALB (Port 80 from internet)"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-alb-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AlbSecurityGroupIngressHttp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AlbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+      Description: "Allow HTTP port 80 from anywhere"
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-app-sg"
+      GroupDescription: !Sub "Security group for ${ProjectName} app servers (Port 8000 from ALB only)"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-app-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AppSecurityGroupIngressFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 8000
+      SourceSecurityGroupId: !Ref AlbSecurityGroup
+      Description: "Allow port 8000 from ALB only"
+
+  DbSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-db-sg"
+      GroupDescription: !Sub "Security group for ${ProjectName} RDS MySQL (Port 3306 from App only)"
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-db-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DbSecurityGroupIngressFromApp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DbSecurityGroup
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+      Description: "Allow MySQL port 3306 from App only"
+
+  # ============================================================================
+  # 5. S3 Storage Bucket
+  # ============================================================================
+  NotesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BucketName: !Sub "${ProjectName}-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentVersionsAfter30Days
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-${AWS::AccountId}-${AWS::Region}"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 6. ECR Repository
+  # ============================================================================
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RepositoryName: !Ref ProjectName
+      ImageTagMutability: MUTABLE
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Ref ProjectName
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 7. SNS Alert Topic & Subscription
+  # ============================================================================
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-alerts"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-alerts"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AlertsEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+# ==============================================================================
+# Outputs
+# ==============================================================================
+Outputs:
+  VpcId:
+    Description: The ID of the VPC
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub "${ProjectName}-VpcId"
+
+  PublicSubnetIds:
+    Description: Comma-separated IDs of the public subnets
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub "${ProjectName}-PublicSubnetIds"
+
+  PrivateSubnetIds:
+    Description: Comma-separated IDs of the private subnets
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Export:
+      Name: !Sub "${ProjectName}-PrivateSubnetIds"
+
+  AlbSecurityGroupId:
+    Description: Security Group ID for the ALB
+    Value: !Ref AlbSecurityGroup
+    Export:
+      Name: !Sub "${ProjectName}-AlbSecurityGroupId"
+
+  AppSecurityGroupId:
+    Description: Security Group ID for the application instances
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: !Sub "${ProjectName}-AppSecurityGroupId"
+
+  DbSecurityGroupId:
+    Description: Security Group ID for the RDS MySQL database
+    Value: !Ref DbSecurityGroup
+    Export:
+      Name: !Sub "${ProjectName}-DbSecurityGroupId"
+
+  BucketName:
+    Description: S3 bucket name for notes and attachments
+    Value: !Ref NotesBucket
+    Export:
+      Name: !Sub "${ProjectName}-BucketName"
+
+  RepositoryUri:
+    Description: URI of the ECR repository
+    Value: !GetAtt EcrRepository.RepositoryUri
+    Export:
+      Name: !Sub "${ProjectName}-RepositoryUri"
+
+  AlertTopicArn:
+    Description: ARN of the SNS topic for operational alerts
+    Value: !Ref AlertsTopic
+    Export:
+      Name: !Sub "${ProjectName}-AlertTopicArn"

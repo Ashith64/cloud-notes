@@ -265,16 +265,72 @@ docker compose up --build
 # Status dashboard at http://localhost:8000/status
 ```
 
+- **Stage 9: Secrets Architecture & ECR Image Push Scripts**
+  - **Architecture Decision — No SSM create-secrets script**: The original Stage 9 guide describes generating `/cloudnotes/db-password` and `/cloudnotes/jwt-secret` in SSM Parameter Store. This step is **not applicable to our architecture**. Our Stage 7 backend (`backend/app/config.py`) resolves secrets via `DB_SECRET_ARN` and `APP_SECRET_ARN` using AWS Secrets Manager. Both secrets are created and managed by CloudFormation/RDS (`AppSecret` + `ManageMasterUserPassword: true`) — no additional SSM parameters are required or created. Creating them would introduce unused, orphaned credentials conflicting with the established interface.
+  - **`scripts/push-image.ps1`** (PowerShell for Windows):
+    - Prerequisite checks for `git`, `docker`, and `aws` with clear failure messages.
+    - Dynamically resolves AWS account ID via `aws sts get-caller-identity`.
+    - Dynamically resolves ECR repository URI from the `EcrRepositoryUri` CloudFormation stack output via `aws cloudformation describe-stacks`.
+    - Authenticates Docker to ECR via `aws ecr get-login-password | docker login --username AWS --password-stdin ...` — token is piped, never printed.
+    - Builds image with `--platform linux/amd64` targeting `t3.micro` x86_64 EC2 instances.
+    - Tags with short `git rev-parse --short HEAD` commit hash **and** `latest`.
+    - Pushes both tags and prints only image URIs, never credentials.
+    - Fails safely on any error; does not overwrite local project files.
+  - **`scripts/push-image.sh`** (Bash for Linux / macOS / WSL):
+    - Identical logic to the PowerShell script; supports `--stack-name` and `--region` arguments.
+    - Uses `set -euo pipefail` for safe error propagation.
+  - **Tests** (`backend/tests/test_stage9.py`): 23 automated tests covering existence, no hard-coded account IDs, no secret echoing, ECR authentication pattern, `--platform linux/amd64`, two-tag push, prerequisite check presence, CloudFormation prerequisite documentation, ECR URI resolved from stack output, and `git rev-parse` tag sourcing.
+  - **README.md** (`README.md`): Added a comprehensive **Deploy to AWS** section covering the three-step deployment order (CloudFormation → image push → instance refresh), secret management rationale, and teardown instructions.
+  - **All 203 backend tests pass** (180 prior + 23 new Stage 9 tests) in 35.20s. No regressions.
+  - **Scripts not yet executed** — pending explicit user approval and a deployed CloudFormation stack.
+
+## How to Run
+
+### Local Development
+
+```sh
+# Backend (port 8000)
+cd backend
+.venv\Scripts\activate
+flask init-db
+python wsgi.py
+
+# Frontend dev server (port 5173)
+cd frontend
+npm run dev
+
+# Or build frontend production bundle
+cd frontend
+npm run build
+
+# Run all 203 backend tests
+cd backend
+.venv\Scripts\pytest.exe tests/ -v
+```
+
+### Running with Docker
+
+```sh
+# Start MySQL 8 and Cloud Notes application
+docker compose up --build
+
+# Access application at http://localhost:8000
+# Health check at http://localhost:8000/api/health
+# Status dashboard at http://localhost:8000/status
+```
+
 ## Next
 
-- **Deployment Execution (Stage 9 / Stage 10 Deploy Phase)**:
-  1. Build and push unified Docker image to ECR (`cloudnotes-repo:latest`).
-  2. Deploy CloudFormation stack via `aws cloudformation deploy --template-file infra/stack.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_IAM --region ap-south-1 --parameter-overrides VpcId=<vpc-id> SubnetIds=<subnet-1>,<subnet-2> AlertEmail=<email> DesiredCapacity=1 MinCapacity=1`.
-  3. Verify live endpoints: `LoadBalancerUrl`, demo account login, note editing, image upload, and public `/status` dashboard.
+- **Deployment Execution (Stage 10 Deploy Phase)**:
+  1. Deploy CloudFormation stack: `aws cloudformation deploy --template-file infra/stack.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_IAM --region ap-south-1 --parameter-overrides VpcId=<vpc-id> SubnetIds=<subnet-1>,<subnet-2> AlertEmail=<email> DesiredCapacity=1 MinCapacity=1`
+  2. Build and push Docker image to ECR: `.\scripts\push-image.ps1` (Windows) or `bash scripts/push-image.sh`
+  3. Verify: `aws ecr describe-images --repository-name cloudnotes-repo --region ap-south-1`
+  4. Open `LoadBalancerUrl`, test demo login, upload image, verify `/status` page.
 
 ## Decisions
 
-- **Single Combined Template (`infra/stack.yaml`)**: Extends the existing Stage 8A template to keep resource definitions, internal references (`!Ref`, `!GetAtt`), and security group rules cohesive without relying on fragile cross-stack imports.
+- **No SSM create-secrets script**: The original Stage 9 guide's SSM parameter creation step is unnecessary for our Secrets Manager-based architecture. `DB_SECRET_ARN` is the RDS-managed master secret, and `APP_SECRET_ARN` is the CloudFormation `AppSecret`. Creating separate SSM parameters (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`) would create orphaned credentials the backend never reads.
+- **Scripts resolve ECR URI from CloudFormation outputs**: Both `push-image.ps1` and `push-image.sh` call `aws cloudformation describe-stacks` to obtain `EcrRepositoryUri`, ensuring no account ID or repository path is ever hard-coded.**: Extends the existing Stage 8A template to keep resource definitions, internal references (`!Ref`, `!GetAtt`), and security group rules cohesive without relying on fragile cross-stack imports.
 - **Secrets Manager Integration Preserved**: Preserved Stage 7 AWS Secrets Manager pattern (`DB_SECRET_ARN`, `APP_SECRET_ARN`, `ManageMasterUserPassword: true`). Secrets are queried securely by the container via IAM instance role at startup, rather than passing raw credentials into UserData or template parameters.
 - **Capacity & Cost Safety**: `DesiredCapacity` and `MinCapacity` default to `0` in the CloudFormation template, ensuring that template syntax and resources can be created or validated without launching billable EC2 compute instances.
 - **Session Manager Access**: `AmazonSSMManagedInstanceCore` managed policy attached to `AppInstanceRole` enables AWS Systems Manager Session Manager, allowing SSH-free terminal access without opening port 22 or provisioning keypairs.
@@ -291,6 +347,7 @@ docker compose up --build
 
 ## Known Issues & Pending Verifications
 
-- **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment, and the host's existing Windows MySQL service requires administrator credentials. Live container startup (`docker compose up --build`) and direct MySQL test execution remain pending an active Docker runtime.
-- **AWS CLI & cfn-lint**: `aws` CLI and `cfn-lint` are not installed locally on this host environment. Template validity was verified via automated Python / PyYAML CloudFormation AST test suite (`backend/tests/test_stage8a.py` and `backend/tests/test_stage8b.py`, 23/23 passed). Stack deployment and remote validation will run when AWS CLI and credentials are provided in deployment phase.
+- **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
+- **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.
+- **AWS CLI & cfn-lint**: `aws` CLI and `cfn-lint` are not installed locally on this host environment. CloudFormation template validity verified via automated Python AST test suites only. AWS remote validation (`aws cloudformation validate-template`) is pending CLI installation.
 - `local_data/` is created on first storage write, not on startup (matches lazy initialization).

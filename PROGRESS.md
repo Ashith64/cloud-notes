@@ -407,12 +407,12 @@ docker compose up --build
   - **CloudFormation Application Template** (`infra/02-app.yaml`):
     - Target AWS region: `ap-southeast-2` (Sydney) — consistent with Stage 9 scripts.
     - Imports all shared resources from the foundation stack (`cloudnotes-foundation`) via `Fn::ImportValue`: VpcId, PublicSubnetIds, PrivateSubnetIds, AlbSecurityGroupId, AppSecurityGroupId, DbSecurityGroupId, BucketName, RepositoryUri, AlertTopicArn.
-    - **Parameters** (9): `ProjectName` (cloudnotes), `ImageTag` (latest), `InstanceType` (t3.micro), `DbInstanceClass` (db.t3.micro), `MinSize` (1), `MaxSize` (2), `DesiredCapacity` (1), `CpuTarget` (50), `BackupRetentionDays` (7).
+    - **Parameters** (9): `ProjectName` (cloudnotes), `ImageTag` (latest), `InstanceType` (t3.micro), `DbInstanceClass` (db.t3.micro), `MinSize` (1), `MaxSize` (2), `DesiredCapacity` (1), `CpuTarget` (50), `BackupRetentionDays` (1, adapted for AWS Free Tier restrictions).
     - **RDS MySQL 8.0** (`DbSubnetGroup`, `DbInstance`):
       - DB subnet group spans both private subnets (no internet route).
       - Identifier `cloudnotes-db`, database `cloudnotes`, admin user, password from SSM SecureString dynamic reference `{{resolve:ssm-secure:/cloudnotes/db-password}}`.
       - 20 GB gp3, `StorageEncrypted: true`, single-AZ, `PubliclyAccessible: false`, `DbSecurityGroup`.
-      - `BackupRetentionPeriod` from parameter, `DeletionProtection: false`, `DeletionPolicy: Delete`.
+      - `BackupRetentionPeriod` from parameter (1 day), `DeletionProtection: false`, `DeletionPolicy: Delete`.
     - **IAM** (`AppInstanceRole`, `AppInstanceProfile`):
       - Managed policy: `AmazonSSMManagedInstanceCore`.
       - One inline policy (`cloudnotes-least-privilege`) with six statements: S3 bucket + object access, ECR auth token (`*`), ECR pull on repo ARN (`arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cloudnotes`), CloudWatch Logs write, SSM GetParameter on `/cloudnotes/db-password` and `/cloudnotes/jwt-secret`, and read-only status-page APIs (`autoscaling:DescribeAutoScalingGroups`, `cloudwatch:GetMetricStatistics`, `rds:DescribeDBInstances`).
@@ -435,12 +435,15 @@ docker compose up --build
     - **CloudWatch Dashboard** (`AppDashboard`): Named `cloudnotes`, 8 widgets (ASG CPU, in-service instances, ALB request count, ALB p99 response time, ALB 5XX errors, ALB healthy hosts, RDS CPU, RDS connections).
     - **Outputs**: `LoadBalancerUrl`, `DashboardUrl`, `DbEndpoint` — all exported.
     - All resources tagged `Project=cloudnotes`.
-    - **Stack Cleanup**: Failed initial deployment record in `ROLLBACK_COMPLETE` was cleanly deleted after confirming all physical resources were previously torn down. Ready for clean deployment.
+    - **Stack Deployment & Status**:
+      - Successfully deployed `cloudnotes-app` to `ap-southeast-2` with `CREATE_COMPLETE`.
+      - `LoadBalancerUrl`: `http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com`
+      - `DashboardUrl`: `https://ap-southeast-2.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-2#dashboards:name=cloudnotes`
+      - `DbEndpoint`: `cloudnotes-db.c5coiociogja.ap-southeast-2.rds.amazonaws.com`
   - **Validation**:
     - `cfn-lint infra/02-app.yaml --region ap-southeast-2` — **0 errors, 0 warnings**.
     - `aws cloudformation validate-template` — **✅ valid**, confirms `CAPABILITY_NAMED_IAM`.
     - All **207 backend tests pass** cleanly.
-    - **No AWS resources deployed or created.**
 
 ## Next
 
@@ -484,6 +487,7 @@ docker compose up --build
   - **`EstimatedInstanceWarmup` on ScalingPolicy**: Placed as a top-level property of `AWS::AutoScaling::ScalingPolicy` (not inside `TargetTrackingConfiguration`) to pass cfn-lint E3002.
   - **`CAPABILITY_NAMED_IAM` required**: The role is given an explicit name (`cloudnotes-instance-role`); deploy command must include `--capabilities CAPABILITY_NAMED_IAM`.
   - **ECR Pull Policy Resource format**: The IAM inline policy requires an IAM ARN format for ECR pull permissions (`arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cloudnotes`), avoiding hardcoded account IDs.
+  - **RDS BackupRetentionDays**: Parameter default set to `1` to avoid AWS Free Tier limitation errors that reject retention periods greater than 1 day.
 
 - **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.

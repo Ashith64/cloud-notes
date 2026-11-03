@@ -13,7 +13,8 @@
     Security:
       - Secrets are generated locally using cryptographically secure random bytes.
       - Secrets are never echoed, printed to console, or written to disk.
-      - Secrets are passed securely to the AWS CLI.
+      - Existence checks use 'aws ssm describe-parameters' to retrieve metadata only,
+        never parameter values.
       - If a parameter already exists, it is safely skipped (not overwritten).
 
 .PARAMETER Region
@@ -81,7 +82,7 @@ Write-Host "`n[2/3] Verifying AWS credentials..." -ForegroundColor Cyan
 Write-Host "  Running: aws sts get-caller-identity --region $Region --query Account --output text"
 
 try {
-    $ACCOUNT_ID = aws sts get-caller-identity --region $Region --query Account --output text 2>&1
+    $ACCOUNT_ID = (aws sts get-caller-identity --region $Region --query Account --output text 2>&1).Trim()
     if ($LASTEXITCODE -ne 0 -or -not ($ACCOUNT_ID -match '^\d{12}$')) {
         Write-Error "AWS credentials are not configured or are invalid. Run 'aws configure' or check credentials."
         exit 1
@@ -104,10 +105,15 @@ function Set-SsmSecretParameter {
         [string]$Description
     )
 
-    # Check if parameter already exists
-    Write-Host "  Checking if parameter '$ParamName' exists..."
-    $null = aws ssm get-parameter --name $ParamName --region $Region 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    # Check if parameter already exists using describe-parameters (metadata only, no values)
+    Write-Host "  Checking if parameter '$ParamName' exists via describe-parameters..."
+    $existing = (aws ssm describe-parameters `
+        --parameter-filters "Key=Name,Option=Equals,Values=$ParamName" `
+        --region $Region `
+        --query "Parameters[0].Name" `
+        --output text 2>&1).Trim()
+
+    if ($LASTEXITCODE -eq 0 -and $existing -eq $ParamName) {
         Write-Host "  [SKIP] Parameter '$ParamName' already exists in SSM ($Region). Skipping." -ForegroundColor Yellow
         return
     }

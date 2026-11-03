@@ -304,30 +304,33 @@ docker compose up --build
     - Prerequisite check for `aws` CLI.
     - Resolves AWS account ID dynamically via `aws sts get-caller-identity`.
     - Generates 24-character alphanumeric database password and 48-character alphanumeric JWT secret locally via `[System.Security.Cryptography.RandomNumberGenerator]`.
-    - Stores them in AWS SSM Parameter Store as `SecureString` at `/cloudnotes/db-password` and `/cloudnotes/jwt-secret` using default region `ap-southeast-2`.
-    - Checks parameter existence with `aws ssm get-parameter` before creating, safely skipping any parameter that already exists.
+    - Checks parameter existence strictly via `aws ssm describe-parameters --parameter-filters "Key=Name,Option=Equals,Values=..."` (retrieving metadata only, never secret values).
+    - Stores parameters in AWS SSM Parameter Store as `SecureString` at `/cloudnotes/db-password` and `/cloudnotes/jwt-secret` using default region `ap-southeast-2`.
+    - Safely skips any parameter that already exists.
     - Never prints secret values to console output or logs; uses `[REDACTED]` log placeholders.
     - Never writes secret values to any file on disk; clears memory variables immediately after execution.
   - **`scripts/create-secrets.sh`** (Bash for Linux / macOS / WSL):
     - Parallel implementation using POSIX shell and `LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom`.
     - Configured with `set -euo pipefail`.
+    - Uses `aws ssm describe-parameters` for metadata-only existence inspection.
     - Dynamically checks caller identity, verifies SSM parameter presence, creates `SecureString` parameters in `ap-southeast-2`, and unsets secret variables immediately.
   - **`scripts/push-image.ps1`** (PowerShell for Windows):
-    - Updated default region to `ap-southeast-2`.
+    - Target region: `ap-southeast-2`.
     - Prerequisite checks for `git`, `docker`, and `aws` with clear failure messages.
     - Dynamically resolves AWS account ID via `aws sts get-caller-identity`.
-    - Dynamically resolves ECR repository URI from CloudFormation stack output (`EcrRepositoryUri` or `RepositoryUri`) with fallback to `${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com/${RepoName}`.
+    - Resolves ECR repository URI dynamically: `${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com/${RepoName}` (default repo `cloudnotes`, matching foundation stack `cloudnotes-foundation`), without unneeded stack lookups.
     - Authenticates Docker to ECR via `aws ecr get-login-password | docker login --username AWS --password-stdin ...` — token is piped, never printed.
     - Builds image with `--platform linux/amd64` targeting x86_64 EC2 instances.
     - Tags with short `git rev-parse --short HEAD` commit hash **and** `latest`.
     - Pushes both tags and prints image tags and URIs.
   - **`scripts/push-image.sh`** (Bash for Linux / macOS / WSL):
-    - Updated default region to `ap-southeast-2`.
-    - Identical logic and flags supporting `--stack-name`, `--repo-name`, and `--region`.
+    - Target region: `ap-southeast-2`.
+    - Direct dynamic repository URI construction `${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}`.
+    - Identical logic and flags supporting `--repo-name` and `--region`.
     - Uses `set -euo pipefail`.
   - **Tests** (`backend/tests/test_stage9.py`):
-    - 17 automated tests covering existence, dynamic account ID lookup, no hardcoded account IDs or credentials, SSM SecureString parameter targets (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`), default region `ap-southeast-2`, skipping existing parameters, 24/48 character secret generation, no secret echoing or file writes, ECR login pattern, `--platform linux/amd64` build, two-tag push, and image tag printing.
-    - All 17 Stage 9 tests and all 206 backend tests pass cleanly.
+    - 18 automated tests covering existence, dynamic account ID lookup, no hardcoded account IDs or credentials, SSM SecureString parameter targets (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`), default region `ap-southeast-2`, metadata-only existence inspection with `describe-parameters` (verifying no `get-parameter` is called during check), skipping existing parameters, 24/48 character secret generation, no secret echoing or file writes, direct dynamic ECR URI resolution without stack lookups, ECR login token protection, `--platform linux/amd64` build, two-tag push, and image tag printing.
+    - All 18 Stage 9 tests and all 207 backend tests pass cleanly.
   - **Safety Compliance**:
     - Neither script was executed. No AWS commands creating secrets or pushing images were run. All AWS commands are documented and displayed for manual review.
 

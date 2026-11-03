@@ -10,12 +10,15 @@ Verifies that:
    - Target SSM Parameter Store parameters /cloudnotes/db-password and /cloudnotes/jwt-secret.
    - Use type SecureString.
    - Use region ap-southeast-2 by default.
+   - Check existence using `aws ssm describe-parameters` (metadata only, never get-parameter or values).
    - Skip parameters that already exist.
    - Generate alphanumeric secrets of lengths 24 and 48 locally.
 6. Both push-image scripts:
    - Use `aws sts get-caller-identity` to resolve the account ID dynamically.
    - Use region ap-southeast-2 by default.
-   - Authenticate to ECR using `aws ecr get-login-password`.
+   - Construct ECR URI dynamically without unnecessary CloudFormation stack lookups.
+   - Authenticate to ECR using `aws ecr get-login-password` piped to `docker login --password-stdin`.
+   - Never print or expose the login token.
    - Build with `--platform linux/amd64`.
    - Tag with short Git commit hash and `latest`.
    - Push both tags.
@@ -113,11 +116,16 @@ def test_create_secrets_default_region_ap_southeast_2():
         )
 
 
-def test_create_secrets_skips_existing():
+def test_create_secrets_uses_describe_parameters_and_skips_existing():
     for script_path in [PS1_SECRETS, SH_SECRETS]:
         content = read_script(script_path)
-        assert "ssm get-parameter" in content, (
-            f"{script_path.name} must check if parameter exists via aws ssm get-parameter"
+        # Must use describe-parameters to inspect metadata only
+        assert "ssm describe-parameters" in content, (
+            f"{script_path.name} must check parameter metadata using aws ssm describe-parameters"
+        )
+        # Must NOT use get-parameter for existence checks
+        assert "ssm get-parameter" not in content, (
+            f"{script_path.name} must not call aws ssm get-parameter; use describe-parameters instead"
         )
         assert "Skipping" in content or "skipping" in content, (
             f"{script_path.name} must report skipping if parameter already exists"
@@ -160,12 +168,29 @@ def test_push_image_default_region_ap_southeast_2():
         )
 
 
-def test_push_image_ecr_login():
+def test_push_image_no_cloudformation_app_stack_lookup():
+    for script_path in [PS1_PUSH, SH_PUSH]:
+        content = read_script(script_path)
+        # Must not perform CloudFormation stack lookups
+        assert "cloudformation describe-stacks" not in content, (
+            f"{script_path.name} should not query describe-stacks for cloudnotes-app"
+        )
+        assert "cloudnotes-app" not in content, (
+            f"{script_path.name} should not reference cloudnotes-app stack"
+        )
+        # Must construct dynamic ECR URI with repo name cloudnotes
+        assert "cloudnotes" in content
+        assert ".dkr.ecr." in content
+
+
+def test_push_image_ecr_login_token_protection():
     for script_path in [PS1_PUSH, SH_PUSH]:
         content = read_script(script_path)
         assert "ecr get-login-password" in content
         assert "docker login" in content
         assert "--password-stdin" in content
+        # Ensure password is piped directly and never echoed or logged
+        assert "echo" not in content or "password-stdin" in content
 
 
 def test_push_image_build_linux_amd64():

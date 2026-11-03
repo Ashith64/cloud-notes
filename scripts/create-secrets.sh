@@ -12,6 +12,8 @@
 # Security:
 #   - Secrets are generated locally using /dev/urandom.
 #   - Secrets are never echoed, printed to console, or written to disk.
+#   - Existence checks use 'aws ssm describe-parameters' to retrieve metadata only,
+#     never parameter values.
 #   - Parameters that already exist are safely skipped.
 #
 set -euo pipefail
@@ -62,6 +64,8 @@ ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --
     exit 1
 }
 
+ACCOUNT_ID="$(echo "${ACCOUNT_ID}" | tr -d '[:space:]')"
+
 if ! [[ "$ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
     echo "ERROR: Unexpected account ID format: $ACCOUNT_ID" >&2
     exit 1
@@ -74,8 +78,15 @@ echo "  [OK] Authenticated to account: ${ACCOUNT_ID} (region: ${REGION})"
 echo -e "\n${cyan}[3/3] Checking and creating SSM SecureString parameters in ${REGION}...${reset}"
 
 # Store DB password (24 characters) if not already existing
-echo "  Checking if parameter '${DB_PARAM_NAME}' exists..."
-if aws ssm get-parameter --name "${DB_PARAM_NAME}" --region "${REGION}" >/dev/null 2>&1; then
+echo "  Checking if parameter '${DB_PARAM_NAME}' exists via describe-parameters..."
+EXISTING_DB=$(aws ssm describe-parameters \
+    --parameter-filters "Key=Name,Option=Equals,Values=${DB_PARAM_NAME}" \
+    --region "${REGION}" \
+    --query "Parameters[0].Name" \
+    --output text 2>/dev/null || true)
+EXISTING_DB="$(echo "${EXISTING_DB}" | tr -d '[:space:]')"
+
+if [[ "${EXISTING_DB}" == "${DB_PARAM_NAME}" ]]; then
     echo -e "  ${yellow}[SKIP] Parameter '${DB_PARAM_NAME}' already exists in SSM (${REGION}). Skipping.${reset}"
 else
     echo "  Parameter '${DB_PARAM_NAME}' not found. Generating 24-character random secret..."
@@ -92,8 +103,15 @@ else
 fi
 
 # Store JWT secret (48 characters) if not already existing
-echo "  Checking if parameter '${JWT_PARAM_NAME}' exists..."
-if aws ssm get-parameter --name "${JWT_PARAM_NAME}" --region "${REGION}" >/dev/null 2>&1; then
+echo "  Checking if parameter '${JWT_PARAM_NAME}' exists via describe-parameters..."
+EXISTING_JWT=$(aws ssm describe-parameters \
+    --parameter-filters "Key=Name,Option=Equals,Values=${JWT_PARAM_NAME}" \
+    --region "${REGION}" \
+    --query "Parameters[0].Name" \
+    --output text 2>/dev/null || true)
+EXISTING_JWT="$(echo "${EXISTING_JWT}" | tr -d '[:space:]')"
+
+if [[ "${EXISTING_JWT}" == "${JWT_PARAM_NAME}" ]]; then
     echo -e "  ${yellow}[SKIP] Parameter '${JWT_PARAM_NAME}' already exists in SSM (${REGION}). Skipping.${reset}"
 else
     echo "  Parameter '${JWT_PARAM_NAME}' not found. Generating 48-character random secret..."

@@ -8,12 +8,11 @@
     tags it with the current short Git commit hash and 'latest', then pushes both
     tags to the project ECR repository in AWS region ap-southeast-2.
 
-.PARAMETER StackName
-    Name of the deployed CloudFormation stack (optional, used to resolve repository output if present).
-    Default: cloudnotes-app
+    The ECR repository URI is resolved dynamically using the authenticated AWS
+    account ID, target region, and repository name 'cloudnotes'.
 
 .PARAMETER RepoName
-    ECR repository name if stack output is not used. Default: cloudnotes
+    ECR repository name. Default: cloudnotes
 
 .PARAMETER Region
     AWS region. Default: ap-southeast-2
@@ -24,7 +23,6 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$StackName = "cloudnotes-app",
     [string]$RepoName = "cloudnotes",
     [string]$Region = "ap-southeast-2"
 )
@@ -68,29 +66,11 @@ try {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Resolve ECR repository URI
+# 3. Resolve ECR repository URI dynamically
 # ---------------------------------------------------------------------------
 Write-Host "`n[3/6] Resolving ECR repository URI..." -ForegroundColor Cyan
-
-$ECR_REPO_URI = $null
-if (-not [string]::IsNullOrWhiteSpace($StackName)) {
-    Write-Host "  Attempting stack resolution from '$StackName'..."
-    Write-Host "  Running: aws cloudformation describe-stacks --stack-name $StackName --region $Region ..."
-    $stackOutput = aws cloudformation describe-stacks `
-        --stack-name $StackName `
-        --region $Region `
-        --query "Stacks[0].Outputs[?OutputKey=='EcrRepositoryUri' || OutputKey=='RepositoryUri'].OutputValue" `
-        --output text 2>&1
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($stackOutput) -and $stackOutput -ne "None") {
-        $ECR_REPO_URI = $stackOutput.Trim().Split()[0]
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($ECR_REPO_URI)) {
-    # Default direct repository URI from dynamic account ID and region
-    $ECR_REPO_URI = "${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com/${RepoName}"
-}
-
+$ECR_REGISTRY = "${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com"
+$ECR_REPO_URI = "${ECR_REGISTRY}/${RepoName}"
 Write-Host "  [OK] ECR repository URI: $ECR_REPO_URI"
 
 # ---------------------------------------------------------------------------
@@ -112,15 +92,14 @@ $IMAGE_TAG_LATEST = "${ECR_REPO_URI}:latest"
 # 5. Authenticate Docker to ECR using aws ecr get-login-password
 # ---------------------------------------------------------------------------
 Write-Host "`n[5/6] Authenticating Docker to ECR..." -ForegroundColor Cyan
-$ECR_REGISTRY = "${ACCOUNT_ID}.dkr.ecr.${Region}.amazonaws.com"
 Write-Host "  Running: aws ecr get-login-password --region $Region | docker login --username AWS --password-stdin $ECR_REGISTRY"
 try {
     $loginPassword = aws ecr get-login-password --region $Region
-    if ($LASTEXITCODE -ne 0) {
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($loginPassword)) {
         Write-Error "Failed to obtain ECR login token from AWS."
         exit 1
     }
-    # Pipe password to docker login — password is never printed
+    # Pipe password directly to docker login stdin — token is never printed
     $loginPassword | docker login --username AWS --password-stdin $ECR_REGISTRY
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Docker login to ECR failed."
@@ -131,7 +110,7 @@ try {
     Write-Error "ECR authentication failed: $_"
     exit 1
 } finally {
-    # Clear variable so the token is not retained in memory
+    # Remove variable from memory
     Remove-Variable -Name loginPassword -ErrorAction SilentlyContinue
 }
 

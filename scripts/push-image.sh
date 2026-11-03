@@ -2,18 +2,19 @@
 # push-image.sh — Build and push the Cloud Notes Docker image to AWS ECR.
 #
 # Usage:
-#   ./scripts/push-image.sh [--stack-name cloudnotes-app] [--repo-name cloudnotes] [--region ap-southeast-2]
+#   ./scripts/push-image.sh [--repo-name cloudnotes] [--region ap-southeast-2]
+#
+# Builds the Docker image with --platform linux/amd64, tags with git short commit
+# and 'latest', and pushes both to ECR in ap-southeast-2.
 #
 set -euo pipefail
 
-STACK_NAME="cloudnotes-app"
 REPO_NAME="cloudnotes"
 REGION="ap-southeast-2"
 
 # Parse optional arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --stack-name) STACK_NAME="$2"; shift 2 ;;
         --repo-name)  REPO_NAME="$2";  shift 2 ;;
         --region)     REGION="$2";     shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 1 ;;
@@ -55,6 +56,8 @@ ACCOUNT_ID=$(aws sts get-caller-identity --region "${REGION}" --query Account --
     exit 1
 }
 
+ACCOUNT_ID="$(echo "${ACCOUNT_ID}" | tr -d '[:space:]')"
+
 if ! [[ "$ACCOUNT_ID" =~ ^[0-9]{12}$ ]]; then
     echo "ERROR: Unexpected account ID format: $ACCOUNT_ID" >&2
     exit 1
@@ -62,28 +65,11 @@ fi
 echo "  [OK] Authenticated to account: ${ACCOUNT_ID} (region: ${REGION})"
 
 # ---------------------------------------------------------------------------
-# 3. Resolve ECR repository URI
+# 3. Resolve ECR repository URI dynamically
 # ---------------------------------------------------------------------------
 echo -e "\n${cyan}[3/6] Resolving ECR repository URI...${reset}"
-
-ECR_REPO_URI=""
-if [[ -n "${STACK_NAME}" ]]; then
-    echo "  Attempting stack resolution from '${STACK_NAME}'..."
-    echo "  Running: aws cloudformation describe-stacks --stack-name ${STACK_NAME} ..."
-    STACK_OUTPUT=$(aws cloudformation describe-stacks \
-        --stack-name "${STACK_NAME}" \
-        --region "${REGION}" \
-        --query "Stacks[0].Outputs[?OutputKey=='EcrRepositoryUri' || OutputKey=='RepositoryUri'].OutputValue" \
-        --output text 2>/dev/null || true)
-    if [[ -n "${STACK_OUTPUT}" && "${STACK_OUTPUT}" != "None" ]]; then
-        ECR_REPO_URI=$(echo "${STACK_OUTPUT}" | awk '{print $1}')
-    fi
-fi
-
-if [[ -z "${ECR_REPO_URI}" ]]; then
-    ECR_REPO_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO_NAME}"
-fi
-
+ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+ECR_REPO_URI="${ECR_REGISTRY}/${REPO_NAME}"
 echo "  [OK] ECR repository URI: ${ECR_REPO_URI}"
 
 # ---------------------------------------------------------------------------
@@ -101,7 +87,6 @@ IMAGE_TAG_LATEST="${ECR_REPO_URI}:latest"
 # 5. Authenticate Docker to ECR using aws ecr get-login-password
 # ---------------------------------------------------------------------------
 echo -e "\n${cyan}[5/6] Authenticating Docker to ECR...${reset}"
-ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 echo "  Running: aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
 aws ecr get-login-password --region "${REGION}" \
     | docker login --username AWS --password-stdin "${ECR_REGISTRY}"

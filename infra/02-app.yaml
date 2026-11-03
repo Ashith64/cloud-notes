@@ -176,7 +176,7 @@ Resources:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
-                Resource: "arn:aws:ecr:ap-southeast-2:869606386865:repository/cloudnotes"
+                Resource: !Sub "arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cloudnotes"
               # CloudWatch Logs: write application logs.
               - Sid: CloudWatchLogs
                 Effect: Allow

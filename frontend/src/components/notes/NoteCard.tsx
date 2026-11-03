@@ -76,17 +76,17 @@ export default function NoteCard({
           }}
           data-note-id={note.id}
           className={cn(
-            'group relative flex flex-col gap-1.5 rounded-xl p-3 text-left transition-colors cursor-pointer border',
+            'group relative flex flex-col gap-1.5 rounded-xl p-3 text-left transition-colors cursor-pointer border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
             isSelected
               ? 'bg-[var(--accent-soft)] border-[var(--accent)] text-[var(--foreground)]'
               : 'bg-[var(--card)] border-transparent hover:border-[var(--border)] hover:bg-[var(--muted)]/50'
           )}
         >
           {/* Header: Title + Action Icons */}
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start justify-between gap-2 min-w-0">
             <h3
               className={cn(
-                'text-sm font-semibold truncate',
+                'text-sm font-semibold truncate flex-1 min-w-0',
                 isSelected ? 'text-[var(--accent)] font-bold' : 'text-[var(--foreground)]'
               )}
             >
@@ -105,7 +105,7 @@ export default function NoteCard({
                     'p-1 rounded-md transition-opacity',
                     note.is_pinned
                       ? 'opacity-100 text-[var(--accent)] hover:opacity-80'
-                      : 'opacity-0 group-hover:opacity-100 text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                      : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
                   )}
                 >
                   <Pin className="h-3.5 w-3.5" fill={note.is_pinned ? 'currentColor' : 'none'} />
@@ -119,7 +119,7 @@ export default function NoteCard({
                     onDelete?.(note.id, e)
                   }}
                   aria-label="Delete note"
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded-md text-[var(--muted-foreground)] hover:text-[var(--destructive)] transition-opacity"
+                  className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-1 rounded-md text-[var(--muted-foreground)] hover:text-[var(--destructive)] transition-opacity"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -166,7 +166,7 @@ export default function NoteCard({
                 <Badge
                   key={tag}
                   variant="outline"
-                  className="px-1.5 py-0 text-[10px] font-normal border-[var(--border)] text-[var(--muted-foreground)]"
+                  className="px-1.5 py-0 text-[10px] font-normal border-[var(--border)] text-[var(--muted-foreground)] max-w-[100px] truncate"
                 >
                   #{tag}
                 </Badge>

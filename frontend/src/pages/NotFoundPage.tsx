@@ -1,9 +1,14 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileQuestion } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 export default function NotFoundPage() {
   const navigate = useNavigate()
+
+  useEffect(() => {
+    document.title = 'Page Not Found - Cloud Notes'
+  }, [])
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--background)] px-6">
       <div className="max-w-sm text-center space-y-6">

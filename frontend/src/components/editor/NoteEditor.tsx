@@ -201,7 +201,7 @@ export default function NoteEditor({
                 variant="secondary"
                 className="gap-1 px-2 py-0.5 text-xs font-normal bg-[var(--muted)] text-[var(--muted-foreground)] hover:text-[var(--foreground)]"
               >
-                <span>#{tag}</span>
+                <span className="max-w-[180px] truncate">#{tag}</span>
                 {!isTrashed && (
                   <button
                     type="button"

@@ -38,6 +38,15 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       const resolved: 'light' | 'dark' = isDark ? 'dark' : 'light'
       setResolvedTheme(resolved)
       document.documentElement.classList.toggle('dark', isDark)
+
+      // Sync <meta name="theme-color"> with active theme background token
+      let meta = document.querySelector('meta[name="theme-color"]') as HTMLMetaElement | null
+      if (!meta) {
+        meta = document.createElement('meta')
+        meta.name = 'theme-color'
+        document.head.appendChild(meta)
+      }
+      meta.content = isDark ? '#0F0F11' : '#FAFAF9'
     }
 
     apply(theme)

@@ -127,6 +127,7 @@ export function RenameNotebookDialog({
         <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Rename notebook</DialogTitle>
+            <DialogDescription className="sr-only">Change the name of this notebook</DialogDescription>
           </DialogHeader>
           <div className="py-4 space-y-2">
             <Label htmlFor="rename-notebook-name">New name</Label>

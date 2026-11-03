@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -46,6 +46,10 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme()
   const { user } = useAuthStore()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    document.title = 'Settings - Cloud Notes'
+  }, [])
 
   // Storage usage query
   const { data: storage, isLoading: isStorageLoading } = useQuery<StorageUsage>({

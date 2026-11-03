@@ -53,6 +53,10 @@ export default function StatusPage() {
   const [loading, setLoading] = useState(true)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
+  useEffect(() => {
+    document.title = 'System Status - Cloud Notes'
+  }, [])
+
   const fetchStatus = async () => {
     try {
       const data = await api.get<StatusData>('/api/status')

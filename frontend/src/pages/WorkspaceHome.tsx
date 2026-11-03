@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -58,6 +58,28 @@ export default function WorkspaceHome() {
     queryFn: () => api.get<NoteDetail>(`/api/notes/${activeNoteId}`),
     enabled: !!activeNoteId,
   })
+
+  // Dynamic document title based on active view and note
+  useEffect(() => {
+    if (activeNote?.title) {
+      document.title = `${activeNote.title} - Cloud Notes`
+    } else if (currentView === 'trash') {
+      document.title = 'Trash - Cloud Notes'
+    } else if (currentView === 'favorites') {
+      document.title = 'Favorites - Cloud Notes'
+    } else if (currentView === 'archive') {
+      document.title = 'Archive - Cloud Notes'
+    } else if (notebookId) {
+      const nb = notebooks.find((n) => n.id === notebookId)
+      document.title = nb ? `${nb.name} - Cloud Notes` : 'Notebook - Cloud Notes'
+    } else if (tagFilter) {
+      document.title = `#${tagFilter} - Cloud Notes`
+    } else if (searchQuery) {
+      document.title = `Search: "${searchQuery}" - Cloud Notes`
+    } else {
+      document.title = 'All Notes - Cloud Notes'
+    }
+  }, [activeNote?.title, currentView, notebookId, tagFilter, searchQuery, notebooks])
 
   // Select note
   const handleSelectNote = (id: string) => {

@@ -29,6 +29,10 @@ export default function LoginPage() {
   )
 
   useEffect(() => {
+    document.title = mode === 'login' ? 'Sign In - Cloud Notes' : 'Create Account - Cloud Notes'
+  }, [mode])
+
+  useEffect(() => {
     if (searchParams.get('expired') === '1') {
       toast.error('Your session has expired. Please log in again.')
     }

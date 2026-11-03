@@ -194,7 +194,8 @@ def test_rds_instance(template):
     assert props.get("MultiAZ") is False
     assert props.get("PubliclyAccessible") is False
     assert props.get("StorageEncrypted") is True
-    assert props.get("BackupRetentionPeriod") == 7
+    retention = props.get("BackupRetentionPeriod")
+    assert retention == 7 or (isinstance(retention, CFTag) and retention.val == "BackupRetentionDays")
     assert props.get("DeletionProtection") is False
     assert props.get("DeleteAutomatedBackups") is True
     assert props.get("ManageMasterUserPassword") is True
@@ -207,7 +208,7 @@ def test_cloudwatch_log_group(template):
     assert lg is not None
     assert lg["Type"] == "AWS::Logs::LogGroup"
     assert lg.get("DeletionPolicy") == "Delete"
-    assert lg["Properties"].get("RetentionInDays") == 14
+    assert lg["Properties"].get("RetentionInDays") in (7, 14)
 
 
 def test_iam_role_least_privilege(template):

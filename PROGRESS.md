@@ -194,6 +194,42 @@
     - Total test suite: 168 tests passing across all suites.
     - **No resources deployed; template creation and validation only.**
 
+- **Stage 8B: Application Stack Infrastructure (`infra/stack.yaml`)**
+  - **Single Combined Template Architecture**: Extended `infra/stack.yaml` to include compute, load balancing, auto-scaling, monitoring, and alerting rather than introducing a disconnected second template or cross-stack imports.
+  - **Parameters**: Added `BackupRetentionDays` (default 7), `MinCapacity` (default 0), and `CpuTarget` (default 50), while preserving existing parameter defaults (`DesiredCapacity: 0`, `MaxCapacity: 2`).
+  - **RDS Updates**: Replaced hardcoded backup retention with `BackupRetentionPeriod: !Ref BackupRetentionDays`.
+  - **Log Group Updates**: Updated `AppLogGroup` retention from 14 days to 7 days (`RetentionInDays: 7`).
+  - **IAM Instance Role Updates**: Attached AWS managed policy `arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore` for keyless terminal access via AWS Systems Manager Session Manager (eliminating SSH port 22 requirements), and added least-privilege `ssm:GetParameter` policy scoped to `arn:aws:ssm:...:parameter/cloudnotes/*`.
+  - **SNS Alerts Topic & Subscription**: Added `AlertsTopic` and `AlertsEmailSubscription` sending operational notifications to `AlertEmail`.
+  - **EC2 Launch Template (`AppLaunchTemplate`)**:
+    - Image: AL2023 x86_64 AMI dynamic lookup via SSM parameter `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`.
+    - Security: IMDSv2 strictly required (`HttpTokens: required`), metadata hop limit set to 2 (`HttpPutResponseHopLimit: 2`), standard CPU credits, detailed 1-minute monitoring enabled, no keypair.
+    - User Data: Automated bash script installing Docker, logging into ECR via instance role (`aws ecr get-login-password`), and starting application container on port 8000 with `awslogs` driver. Reuses Secrets Manager ARNs (`DB_SECRET_ARN`, `APP_SECRET_ARN`) directly to maintain compatibility with Stage 7 backend without leaking or hardcoding secret values.
+  - **Application Load Balancer & Target Group (`AppAlb`, `AppTargetGroup`, `AppAlbListener`)**:
+    - Internet-facing ALB in public subnets with `AlbSg` security group.
+    - Port 8000 target group with `/api/health` health checks (interval 15s, healthy threshold 2, unhealthy threshold 3).
+    - Port 80 HTTP listener forwarding traffic to target group.
+  - **Auto Scaling Group & Target Tracking (`AppAsg`, `AppScalingPolicy`)**:
+    - Named `cloudnotes-asg` across public subnets.
+    - ELB health check type with 300s grace period and 1-minute metrics collection.
+    - Rolling update policy (`AutoScalingRollingUpdate`).
+    - CPU target-tracking policy maintaining average CPU utilization at `CpuTarget` (50%) with 120s instance warmup.
+  - **CloudWatch Alarms (4 Alarms)**:
+    - `AlarmAsgHighCpu`: ASG CPU > 70% for 2 minutes.
+    - `AlarmAlbTarget5xx`: ALB target 5XX count >= 10 in 5 minutes.
+    - `AlarmAlbUnhealthyHosts`: Unhealthy host count >= 1 for 2 minutes.
+    - `AlarmRdsHighCpu`: RDS MySQL CPU > 80% for 5 minutes.
+    - All alarms notify `AlertsTopic`.
+  - **CloudWatch Dashboard (`AppDashboard`)**:
+    - Dashboard named `cloudnotes` with 8 operational metric widgets (ASG CPU, in-service instances, ALB requests, target response time, 5xx errors, healthy hosts, RDS CPU, RDS connections).
+  - **Outputs**:
+    - Added `LoadBalancerUrl`, `DashboardUrl`, `DbEndpoint`, `AlertsTopicArn`, and `LoadBalancerDnsName`.
+  - **Testing & Verification**:
+    - Added `backend/tests/test_stage8b.py` with 12 comprehensive automated test cases.
+    - Verified all 180 project tests pass cleanly.
+    - Template syntax and structure verified via Python AST and PyYAML parser.
+    - **No resources deployed; template creation and validation only.**
+
 ## How to Run
 
 ### Local Development
@@ -213,7 +249,7 @@ npm run dev
 cd frontend
 npm run build
 
-# Run all 157 backend tests
+# Run all 180 backend tests
 cd backend
 .venv\Scripts\pytest.exe tests/ -v
 ```
@@ -231,13 +267,21 @@ docker compose up --build
 
 ## Next
 
-- Stage 8B: Auto Scaling Group, Launch Template, Application Load Balancer, CloudWatch Alarms & Deployment Execution.
+- **Deployment Execution (Stage 9 / Stage 10 Deploy Phase)**:
+  1. Build and push unified Docker image to ECR (`cloudnotes-repo:latest`).
+  2. Deploy CloudFormation stack via `aws cloudformation deploy --template-file infra/stack.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_IAM --region ap-south-1 --parameter-overrides VpcId=<vpc-id> SubnetIds=<subnet-1>,<subnet-2> AlertEmail=<email> DesiredCapacity=1 MinCapacity=1`.
+  3. Verify live endpoints: `LoadBalancerUrl`, demo account login, note editing, image upload, and public `/status` dashboard.
 
 ## Decisions
 
+- **Single Combined Template (`infra/stack.yaml`)**: Extends the existing Stage 8A template to keep resource definitions, internal references (`!Ref`, `!GetAtt`), and security group rules cohesive without relying on fragile cross-stack imports.
+- **Secrets Manager Integration Preserved**: Preserved Stage 7 AWS Secrets Manager pattern (`DB_SECRET_ARN`, `APP_SECRET_ARN`, `ManageMasterUserPassword: true`). Secrets are queried securely by the container via IAM instance role at startup, rather than passing raw credentials into UserData or template parameters.
+- **Capacity & Cost Safety**: `DesiredCapacity` and `MinCapacity` default to `0` in the CloudFormation template, ensuring that template syntax and resources can be created or validated without launching billable EC2 compute instances.
+- **Session Manager Access**: `AmazonSSMManagedInstanceCore` managed policy attached to `AppInstanceRole` enables AWS Systems Manager Session Manager, allowing SSH-free terminal access without opening port 22 or provisioning keypairs.
+- **IMDSv2 Hop Limit**: Configured `HttpPutResponseHopLimit: 2` in `AppLaunchTemplate` to allow Docker containers to query EC2 instance metadata (instance ID and Availability Zone) for `/api/status`.
 - Structured JSON logging uses `json.dumps` with UTC timestamps and standard field names (`time`, `level`, `message`, `request_id`, `route`, `status`, `duration_ms`).
 - In-memory cache `_SECRETS_CACHE` prevents repeated AWS Secrets Manager calls across multiple worker threads or configuration reads.
-- `COOKIE_SECURE` is explicitly configurable via environment variable (default `false`) so Docker Compose local testing over HTTP functions properly, while production CloudFormation sets `COOKIE_SECURE=true`.
+- `COOKIE_SECURE` is explicitly configurable via environment variable (default `false`) so Docker Compose local testing over HTTP functions properly, while production CloudFormation sets `COOKIE_SECURE=false` (for HTTP ALB listener without custom SSL certificate).
 - SPA fallback serves `index.html` for non-API routes when `FRONTEND_DIST_DIR` is present, while strictly returning JSON 404s for any `/api/*` path.
 - `docker-entrypoint.sh` uses POSIX shell with retry loop (30 attempts x 2s) for database initialization to handle MySQL startup latency.
 - S3 `DeletionPolicy: Retain` prevents CloudFormation stack deletion failure if the bucket has objects or versions; documented honest manual bucket emptying and deletion in `infra/README.md`.
@@ -248,5 +292,5 @@ docker compose up --build
 ## Known Issues & Pending Verifications
 
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment, and the host's existing Windows MySQL service requires administrator credentials. Live container startup (`docker compose up --build`) and direct MySQL test execution remain pending an active Docker runtime.
-- **AWS CLI & cfn-lint**: `aws` CLI and `cfn-lint` are not installed locally on this host environment. Template validity was verified via automated Python / PyYAML CloudFormation AST test suite (`backend/tests/test_stage8a.py`, 11/11 passed). Stack deployment and remote validation will run when AWS CLI and credentials are provided in Stage 8B.
+- **AWS CLI & cfn-lint**: `aws` CLI and `cfn-lint` are not installed locally on this host environment. Template validity was verified via automated Python / PyYAML CloudFormation AST test suite (`backend/tests/test_stage8a.py` and `backend/tests/test_stage8b.py`, 23/23 passed). Stack deployment and remote validation will run when AWS CLI and credentials are provided in deployment phase.
 - `local_data/` is created on first storage write, not on startup (matches lazy initialization).

@@ -1,0 +1,702 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Notes - Stage 10 Application Stack (ap-southeast-2).
+  Provisions RDS MySQL, IAM instance role, CloudWatch log group, EC2 launch
+  template, Application Load Balancer, Auto Scaling Group, CloudWatch alarms,
+  and a CloudWatch dashboard.  Imports all shared resources from the foundation
+  stack (cloudnotes-foundation) via Fn::ImportValue.
+  No NAT Gateway, no Multi-AZ, no SSH key pair, no Elastic IPs.
+
+# ==============================================================================
+# Parameters
+# ==============================================================================
+Parameters:
+  ProjectName:
+    Type: String
+    Default: cloudnotes
+    Description: Project name; must match the foundation stack ProjectName.
+    AllowedPattern: "^[a-z0-9-]+$"
+    ConstraintDescription: Lowercase alphanumeric and hyphens only.
+
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: ECR image tag to deploy (e.g. "latest" or a git-sha).
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for application servers.
+
+  DbInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS instance class.
+
+  MinSize:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: Minimum number of EC2 instances in the Auto Scaling Group.
+
+  MaxSize:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    Description: Maximum number of EC2 instances in the Auto Scaling Group.
+
+  DesiredCapacity:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: Desired number of EC2 instances at launch.
+
+  CpuTarget:
+    Type: Number
+    Default: 50
+    MinValue: 10
+    MaxValue: 90
+    Description: Target average CPU utilisation (%) for the scaling policy.
+
+  BackupRetentionDays:
+    Type: Number
+    Default: 7
+    MinValue: 1
+    MaxValue: 35
+    Description: Number of days to retain automated RDS backups.
+
+# ==============================================================================
+# Resources
+# ==============================================================================
+Resources:
+
+  # ============================================================================
+  # 1. RDS MySQL 8.0
+  # ============================================================================
+
+  # Subnet group spans both private subnets (no internet route).
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "Private subnets for ${ProjectName} RDS instance"
+      SubnetIds:
+        - !Select
+          - 0
+          - !Split [",", !ImportValue {"Fn::Sub": "${ProjectName}-PrivateSubnetIds"}]
+        - !Select
+          - 1
+          - !Split [",", !ImportValue {"Fn::Sub": "${ProjectName}-PrivateSubnetIds"}]
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-db-subnet-group"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DbInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: cloudnotes-db
+      DBName: cloudnotes
+      Engine: mysql
+      EngineVersion: "8.0"
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: "20"
+      StorageType: gp3
+      StorageEncrypted: true
+      MasterUsername: admin
+      # Dynamic reference — CloudFormation resolves the SecureString from
+      # SSM Parameter Store at deploy time; the value is never in plaintext.
+      MasterUserPassword: "{{resolve:ssm-secure:/cloudnotes/db-password}}"
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-DbSecurityGroupId"}
+      MultiAZ: false
+      PubliclyAccessible: false
+      BackupRetentionPeriod: !Ref BackupRetentionDays
+      DeletionProtection: false
+      DeleteAutomatedBackups: true
+      Tags:
+        - Key: Name
+          Value: cloudnotes-db
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 2. IAM: Instance Role & Profile
+  # ============================================================================
+  AppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-instance-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      # AWS managed policy enables SSM Session Manager (no SSH required).
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      # One inline policy with the minimum permissions this application needs.
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-least-privilege"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # S3: list the bucket and read/write/delete objects.
+              - Sid: S3BucketAccess
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !Sub
+                  - "arn:aws:s3:::${Bucket}"
+                  - Bucket: !ImportValue {"Fn::Sub": "${ProjectName}-BucketName"}
+              - Sid: S3ObjectAccess
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub
+                  - "arn:aws:s3:::${Bucket}/*"
+                  - Bucket: !ImportValue {"Fn::Sub": "${ProjectName}-BucketName"}
+              # ECR: pull images (GetAuthorizationToken must be on *).
+              - Sid: EcrAuth
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: EcrPull
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !ImportValue {"Fn::Sub": "${ProjectName}-RepositoryUri"}
+              # CloudWatch Logs: write application logs.
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub "arn:aws:logs:ap-southeast-2:${AWS::AccountId}:log-group:/cloudnotes/app:*"
+              # SSM Parameter Store: read the two SecureString secrets.
+              - Sid: SsmSecrets
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub "arn:aws:ssm:ap-southeast-2:${AWS::AccountId}:parameter/cloudnotes/db-password"
+                  - !Sub "arn:aws:ssm:ap-southeast-2:${AWS::AccountId}:parameter/cloudnotes/jwt-secret"
+              # Status page: read-only AWS monitoring APIs (cannot be scoped by ARN).
+              - Sid: MonitoringReadOnly
+                Effect: Allow
+                Action:
+                  - autoscaling:DescribeAutoScalingGroups
+                  - cloudwatch:GetMetricStatistics
+                  - rds:DescribeDBInstances
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${ProjectName}-instance-profile"
+      Roles:
+        - !Ref AppInstanceRole
+
+  # ============================================================================
+  # 3. CloudWatch Log Group
+  # ============================================================================
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /cloudnotes/app
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 4. EC2 Launch Template
+  # ============================================================================
+  AppLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${ProjectName}-launch-template"
+      LaunchTemplateData:
+        # Latest Amazon Linux 2023 x86_64 AMI resolved via public SSM parameter
+        # at deploy time — no hard-coded AMI ID.
+        ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: !Ref AppInstanceProfile
+
+        # Security group from foundation stack.
+        SecurityGroupIds:
+          - !ImportValue {"Fn::Sub": "${ProjectName}-AppSecurityGroupId"}
+
+        # IMDSv2 required; hop limit of 2 so Docker containers can call IMDS.
+        MetadataOptions:
+          HttpTokens: required
+          HttpPutResponseHopLimit: 2
+          HttpEndpoint: enabled
+
+        # Enable detailed (1-minute) CloudWatch monitoring.
+        Monitoring:
+          Enabled: true
+
+        # Standard CPU credits (not unlimited) for t3.micro cost predictability.
+        CreditSpecification:
+          CpuCredits: standard
+
+        # No SSH key pair — access via SSM Session Manager only.
+
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Name
+                Value: !Sub "${ProjectName}-app"
+              - Key: Project
+                Value: !Ref ProjectName
+          - ResourceType: volume
+            Tags:
+              - Key: Project
+                Value: !Ref ProjectName
+
+        # User data: install Docker, authenticate to ECR, retrieve secrets from
+        # SSM Parameter Store (without echoing them), then run the container
+        # with the awslogs log driver.
+        UserData:
+          Fn::Base64:
+            !Sub
+              - |
+                #!/bin/bash
+                set -euo pipefail
+
+                REGION="ap-southeast-2"
+                ACCOUNT_ID=$(TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+                  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600") && \
+                  aws sts get-caller-identity --query Account --output text --region ${!REGION})
+                ECR_REGISTRY="${!ACCOUNT_ID}.dkr.ecr.${!REGION}.amazonaws.com"
+                REPO_URI="${RepositoryUri}"
+                IMAGE="${!REPO_URI}:${ImageTag}"
+
+                # ---- Install Docker ----
+                dnf install -y docker
+                systemctl enable docker
+                systemctl start docker
+
+                # ---- Authenticate Docker to ECR (token is piped, never printed) ----
+                aws ecr get-login-password --region ${!REGION} | \
+                  docker login --username AWS --password-stdin "${!ECR_REGISTRY}"
+
+                # ---- Retrieve secrets from SSM (values never echoed) ----
+                JWT_SECRET=$(aws ssm get-parameter \
+                  --name "/cloudnotes/jwt-secret" \
+                  --with-decryption \
+                  --query "Parameter.Value" \
+                  --output text \
+                  --region ${!REGION})
+
+                DB_PASSWORD=$(aws ssm get-parameter \
+                  --name "/cloudnotes/db-password" \
+                  --with-decryption \
+                  --query "Parameter.Value" \
+                  --output text \
+                  --region ${!REGION})
+
+                DB_ENDPOINT="${DbEndpoint}"
+
+                # ---- Run the application container ----
+                docker run -d \
+                  --name cloudnotes \
+                  --restart unless-stopped \
+                  -p 8000:8000 \
+                  -e FLASK_ENV=production \
+                  -e COOKIE_SECURE=false \
+                  -e STORAGE_BACKEND=s3 \
+                  -e S3_BUCKET="${BucketName}" \
+                  -e AWS_DEFAULT_REGION=${!REGION} \
+                  -e DATABASE_URL="mysql+pymysql://admin:${!DB_PASSWORD}@${!DB_ENDPOINT}/cloudnotes?charset=utf8mb4" \
+                  -e SECRET_KEY="${!JWT_SECRET}" \
+                  --log-driver=awslogs \
+                  --log-opt awslogs-region=${!REGION} \
+                  --log-opt awslogs-group=/cloudnotes/app \
+                  --log-opt awslogs-stream=$(curl -s -H "X-aws-ec2-metadata-token: $(curl -s -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')" http://169.254.169.254/latest/meta-data/instance-id) \
+                  --log-opt awslogs-create-group=false \
+                  "${!IMAGE}"
+              - RepositoryUri: !ImportValue {"Fn::Sub": "${ProjectName}-RepositoryUri"}
+                BucketName:    !ImportValue {"Fn::Sub": "${ProjectName}-BucketName"}
+                DbEndpoint:    !GetAtt DbInstance.Endpoint.Address
+
+  # ============================================================================
+  # 5. Application Load Balancer, Target Group & HTTP Listener
+  # ============================================================================
+  AppAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "${ProjectName}-alb"
+      Scheme: internet-facing
+      Type: application
+      Subnets:
+        - !Select
+          - 0
+          - !Split [",", !ImportValue {"Fn::Sub": "${ProjectName}-PublicSubnetIds"}]
+        - !Select
+          - 1
+          - !Split [",", !ImportValue {"Fn::Sub": "${ProjectName}-PublicSubnetIds"}]
+      SecurityGroups:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlbSecurityGroupId"}
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-alb"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub "${ProjectName}-tg"
+      Protocol: HTTP
+      Port: 8000
+      VpcId: !ImportValue {"Fn::Sub": "${ProjectName}-VpcId"}
+      TargetType: instance
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: "8000"
+      HealthCheckPath: /api/health
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: "200"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-tg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AppAlbListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref AppAlb
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AppTargetGroup
+
+  # ============================================================================
+  # 6. Auto Scaling Group
+  # ============================================================================
+  AppAsg:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AutoScalingGroupName: cloudnotes-asg
+      LaunchTemplate:
+        LaunchTemplateId: !Ref AppLaunchTemplate
+        Version: !GetAtt AppLaunchTemplate.LatestVersionNumber
+      MinSize: !Ref MinSize
+      MaxSize: !Ref MaxSize
+      DesiredCapacity: !Ref DesiredCapacity
+      # Servers live in public subnets so they can reach ECR, SSM and S3
+      # without a NAT Gateway.  The security group (AppSg) restricts ingress to
+      # port 8000 from the ALB only — no direct internet exposure.
+      VPCZoneIdentifier:
+        - !Select
+          - 0
+          - !Split [",", !ImportValue {"Fn::Sub": "${ProjectName}-PublicSubnetIds"}]
+        - !Select
+          - 1
+          - !Split [",", !ImportValue {"Fn::Sub": "${ProjectName}-PublicSubnetIds"}]
+      TargetGroupARNs:
+        - !Ref AppTargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      # 1-minute granularity group-level metrics for the dashboard.
+      MetricsCollection:
+        - Granularity: "1Minute"
+          Metrics:
+            - GroupInServiceInstances
+            - GroupDesiredCapacity
+            - GroupTotalInstances
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-asg-instance"
+          PropagateAtLaunch: true
+        - Key: Project
+          Value: !Ref ProjectName
+          PropagateAtLaunch: true
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT5M
+        WaitOnResourceSignals: false
+
+  AppScalingPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AppAsg
+      PolicyType: TargetTrackingScaling
+      # Allow 120 seconds for a new instance to warm up before influencing metrics.
+      EstimatedInstanceWarmup: 120
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: !Ref CpuTarget
+
+  # ============================================================================
+  # 7. CloudWatch Alarms
+  # ============================================================================
+
+  # Alarm: ASG average CPU > 70% for 2 consecutive 1-minute periods.
+  AlarmAsgHighCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-asg-high-cpu"
+      AlarmDescription: "ASG average CPU utilisation exceeded 70% for 2 minutes"
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref AppAsg
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+      OKActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+
+  # Alarm: ALB target 5XX count >= 10 in a 5-minute window.
+  AlarmAlbTarget5xx:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-alb-5xx"
+      AlarmDescription: "ALB target 5XX error count >= 10 over 5 minutes"
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_Target_5XX_Count
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt AppAlb.LoadBalancerFullName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+      OKActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+
+  # Alarm: any unhealthy ALB target >= 1 for 2 minutes.
+  AlarmAlbUnhealthyHosts:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-alb-unhealthy-hosts"
+      AlarmDescription: "One or more ALB targets are unhealthy for 2 minutes"
+      Namespace: AWS/ApplicationELB
+      MetricName: UnHealthyHostCount
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt AppAlb.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt AppTargetGroup.TargetGroupFullName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+      OKActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+
+  # Alarm: RDS CPU > 80% for 5 consecutive 1-minute periods.
+  AlarmRdsHighCpu:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-rds-high-cpu"
+      AlarmDescription: "RDS CPU utilisation exceeded 80% for 5 minutes"
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: cloudnotes-db
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+      OKActions:
+        - !ImportValue {"Fn::Sub": "${ProjectName}-AlertTopicArn"}
+
+  # ============================================================================
+  # 8. CloudWatch Dashboard
+  # ============================================================================
+  AppDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: cloudnotes
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0, "y": 0, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ASG Average CPU Utilisation (%)",
+                  "metrics": [
+                    ["AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "cloudnotes-asg",
+                     {"stat": "Average", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2",
+                  "yAxis": {"left": {"min": 0, "max": 100}},
+                  "annotations": {"horizontal": [{"value": 70, "label": "Alarm threshold", "color": "#ff6961"}]}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 0, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ASG In-Service Instances",
+                  "metrics": [
+                    ["AWS/AutoScaling", "GroupInServiceInstances", "AutoScalingGroupName", "cloudnotes-asg",
+                     {"stat": "Average", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2",
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ALB Request Count",
+                  "metrics": [
+                    ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${AlbFullName}",
+                     {"stat": "Sum", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 6, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ALB Target Response Time (p99, seconds)",
+                  "metrics": [
+                    ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${AlbFullName}",
+                     {"stat": "p99", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ALB 5XX Errors",
+                  "metrics": [
+                    ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${AlbFullName}",
+                     {"stat": "Sum", "period": 60, "color": "#ff6961"}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2",
+                  "annotations": {"horizontal": [{"value": 10, "label": "Alarm threshold", "color": "#ff6961"}]}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 12, "width": 12, "height": 6,
+                "properties": {
+                  "title": "ALB Healthy Host Count",
+                  "metrics": [
+                    ["AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", "${AlbFullName}",
+                     "TargetGroup", "${TgFullName}",
+                     {"stat": "Minimum", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2",
+                  "yAxis": {"left": {"min": 0}}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "RDS CPU Utilisation (%)",
+                  "metrics": [
+                    ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "cloudnotes-db",
+                     {"stat": "Average", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2",
+                  "yAxis": {"left": {"min": 0, "max": 100}},
+                  "annotations": {"horizontal": [{"value": 80, "label": "Alarm threshold", "color": "#ff6961"}]}
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12, "y": 18, "width": 12, "height": 6,
+                "properties": {
+                  "title": "RDS Database Connections",
+                  "metrics": [
+                    ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "cloudnotes-db",
+                     {"stat": "Average", "period": 60}]
+                  ],
+                  "view": "timeSeries",
+                  "region": "ap-southeast-2",
+                  "yAxis": {"left": {"min": 0}}
+                }
+              }
+            ]
+          }
+        - AlbFullName: !GetAtt AppAlb.LoadBalancerFullName
+          TgFullName:  !GetAtt AppTargetGroup.TargetGroupFullName
+
+# ==============================================================================
+# Outputs
+# ==============================================================================
+Outputs:
+  LoadBalancerUrl:
+    Description: Public URL of the Application Load Balancer
+    Value: !Sub "http://${AppAlb.DNSName}"
+    Export:
+      Name: !Sub "${ProjectName}-LoadBalancerUrl"
+
+  DashboardUrl:
+    Description: URL of the CloudWatch operational dashboard
+    Value: "https://ap-southeast-2.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-2#dashboards:name=cloudnotes"
+    Export:
+      Name: !Sub "${ProjectName}-DashboardUrl"
+
+  DbEndpoint:
+    Description: Hostname of the RDS MySQL endpoint
+    Value: !GetAtt DbInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${ProjectName}-DbEndpoint"

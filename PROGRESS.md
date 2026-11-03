@@ -403,6 +403,44 @@ docker compose up --build
 # Status dashboard at http://localhost:8000/status
 ```
 
+- **Stage 10: Application Stack Template (`infra/02-app.yaml`)**
+  - **CloudFormation Application Template** (`infra/02-app.yaml`):
+    - Target AWS region: `ap-southeast-2` (Sydney) — consistent with Stage 9 scripts.
+    - Imports all shared resources from the foundation stack (`cloudnotes-foundation`) via `Fn::ImportValue`: VpcId, PublicSubnetIds, PrivateSubnetIds, AlbSecurityGroupId, AppSecurityGroupId, DbSecurityGroupId, BucketName, RepositoryUri, AlertTopicArn.
+    - **Parameters** (9): `ProjectName` (cloudnotes), `ImageTag` (latest), `InstanceType` (t3.micro), `DbInstanceClass` (db.t3.micro), `MinSize` (1), `MaxSize` (2), `DesiredCapacity` (1), `CpuTarget` (50), `BackupRetentionDays` (7).
+    - **RDS MySQL 8.0** (`DbSubnetGroup`, `DbInstance`):
+      - DB subnet group spans both private subnets (no internet route).
+      - Identifier `cloudnotes-db`, database `cloudnotes`, admin user, password from SSM SecureString dynamic reference `{{resolve:ssm-secure:/cloudnotes/db-password}}`.
+      - 20 GB gp3, `StorageEncrypted: true`, single-AZ, `PubliclyAccessible: false`, `DbSecurityGroup`.
+      - `BackupRetentionPeriod` from parameter, `DeletionProtection: false`, `DeletionPolicy: Delete`.
+    - **IAM** (`AppInstanceRole`, `AppInstanceProfile`):
+      - Managed policy: `AmazonSSMManagedInstanceCore`.
+      - One inline policy (`cloudnotes-least-privilege`) with six statements: S3 bucket + object access, ECR auth token (`*`), ECR pull on repo ARN, CloudWatch Logs write, SSM GetParameter on `/cloudnotes/db-password` and `/cloudnotes/jwt-secret`, and read-only status-page APIs (`autoscaling:DescribeAutoScalingGroups`, `cloudwatch:GetMetricStatistics`, `rds:DescribeDBInstances`).
+    - **CloudWatch Log Group** (`AppLogGroup`): `/cloudnotes/app`, 7-day retention, `DeletionPolicy: Delete`.
+    - **EC2 Launch Template** (`AppLaunchTemplate`):
+      - AMI: `{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}` — latest AL2023 x86_64, resolved at deploy time, no hard-coded AMI ID.
+      - `AppSecurityGroup`, `AppInstanceProfile`, IMDSv2 required, hop limit 2, detailed monitoring enabled, standard CPU credits, no keypair.
+      - User data installs Docker, pipes ECR password (never printed), retrieves `jwt-secret` and `db-password` from SSM via `--with-decryption` (values never echoed), then runs the container with `awslogs` log driver wired to `/cloudnotes/app`.
+    - **ALB, Target Group & Listener** (`AppAlb`, `AppTargetGroup`, `AppAlbListener`):
+      - Internet-facing ALB across both public subnets, `AlbSecurityGroup`.
+      - Port 8000 target group with `/api/health` health check (interval 15s, 2/3 thresholds, 5s timeout).
+      - Port 80 HTTP listener forwarding to target group.
+    - **Auto Scaling Group** (`AppAsg`): Named `cloudnotes-asg`, across both public subnets, ELB health check type, 300s grace period, rolling update policy (`MinInstancesInService: 1`, `MaxBatchSize: 1`, `PauseTime: PT5M`), 1-minute group metrics collection.
+    - **Target Tracking Scaling Policy** (`AppScalingPolicy`): `ASGAverageCPUUtilization` at `CpuTarget` (50%), `EstimatedInstanceWarmup: 120`.
+    - **4 CloudWatch Alarms** notifying `cloudnotes-AlertTopicArn` (existing SNS topic from foundation stack):
+      - `cloudnotes-asg-high-cpu`: ASG CPU > 70% for 2 minutes.
+      - `cloudnotes-alb-5xx`: ALB 5XX count >= 10 over 5 minutes.
+      - `cloudnotes-alb-unhealthy-hosts`: Unhealthy hosts >= 1 for 2 minutes.
+      - `cloudnotes-rds-high-cpu`: RDS CPU > 80% for 5 minutes.
+    - **CloudWatch Dashboard** (`AppDashboard`): Named `cloudnotes`, 8 widgets (ASG CPU, in-service instances, ALB request count, ALB p99 response time, ALB 5XX errors, ALB healthy hosts, RDS CPU, RDS connections).
+    - **Outputs**: `LoadBalancerUrl`, `DashboardUrl`, `DbEndpoint` — all exported.
+    - All resources tagged `Project=cloudnotes`.
+  - **Validation**:
+    - `cfn-lint infra/02-app.yaml --region ap-southeast-2` — **0 errors, 0 warnings**.
+    - `aws cloudformation validate-template` — **✅ valid**, confirms `CAPABILITY_NAMED_IAM`.
+    - All **207 backend tests pass** cleanly.
+    - **No AWS resources deployed or created.**
+
 ## Next
 
 - **Deployment Execution (Stage 10 Deploy Phase)**:
@@ -436,6 +474,14 @@ docker compose up --build
 - Security group inbound chain strictly enforces ALB (HTTP 80 from internet) -> App (port 8000 from AlbSg) -> DB (port 3306 from AppSg) with no other inbound rules.
 
 ## Known Issues & Pending Verifications
+
+- **Stage 10 Application Stack Decisions (`infra/02-app.yaml`)**:
+  - **Two-stack split**: Foundation stack (`01-foundation.yaml`) holds permanent/cheap resources (VPC, S3, ECR, SNS, security groups). Application stack (`02-app.yaml`) holds billable resources (RDS, EC2, ALB, ASG) that can be torn down without destroying the foundation.
+  - **SSM dynamic reference for DB password**: `{{resolve:ssm-secure:/cloudnotes/db-password}}` lets CloudFormation inject the SecureString at deploy time without storing or displaying the value in the template or stack events.
+  - **SSM runtime retrieval for JWT secret**: The JWT secret is retrieved in user data at instance boot (`aws ssm get-parameter --with-decryption`) rather than via a dynamic reference, because it must be passed as an environment variable to the Docker container (not an RDS credential). Values are never echoed.
+  - **RDS in private subnets, EC2 in public subnets**: EC2 instances in public subnets get a public IP and can reach ECR, SSM and S3 endpoints directly over the internet without a NAT Gateway. The DB security group restricts MySQL (3306) to the app security group only; no internet path to the database exists.
+  - **`EstimatedInstanceWarmup` on ScalingPolicy**: Placed as a top-level property of `AWS::AutoScaling::ScalingPolicy` (not inside `TargetTrackingConfiguration`) to pass cfn-lint E3002.
+  - **`CAPABILITY_NAMED_IAM` required**: The role is given an explicit name (`cloudnotes-instance-role`); deploy command must include `--capabilities CAPABILITY_NAMED_IAM`.
 
 - **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.

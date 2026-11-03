@@ -1,0 +1,478 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Notes - Stage 8A Infrastructure Foundation
+  Defines ECR repository, S3 storage, Secrets Manager, Security Groups,
+  RDS MySQL 8, CloudWatch Log Group, IAM Role, and Instance Profile.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: cloudnotes
+    Description: Project name used for resource naming and tagging
+    AllowedPattern: "^[a-z0-9-]+$"
+    ConstraintDescription: Must contain only lowercase alphanumeric characters and hyphens.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: ID of the VPC (typically the default VPC) where resources will reside
+
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: List of at least two public subnet IDs in different Availability Zones within the VPC
+
+  AlertEmail:
+    Type: String
+    Description: Email address for operational alerts and CloudWatch notifications
+    AllowedPattern: "^[^@]+@[^@]+\\.[^@]+$"
+    ConstraintDescription: Must be a valid email address.
+
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: Tag of the Docker image to deploy from ECR
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    Description: EC2 instance type for application servers
+
+  DBInstanceClass:
+    Type: String
+    Default: db.t3.micro
+    Description: RDS DB instance class for MySQL database
+
+  DesiredCapacity:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 10
+    Description: Initial desired capacity for the Auto Scaling Group (0 during initial setup)
+
+  MaxCapacity:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 10
+    Description: Maximum capacity for the Auto Scaling Group
+
+Resources:
+  # ============================================================================
+  # 1. ECR Repository
+  # ============================================================================
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RepositoryName: !Sub "${ProjectName}-repo"
+      ImageTagMutability: MUTABLE
+      EmptyOnDelete: true
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 2. S3 Storage Bucket & Bucket Policy
+  # ============================================================================
+  NotesBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "${ProjectName}-storage-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireNoncurrentVersionsAndAbortIncomplete
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  NotesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref NotesBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyNonTlsAccess
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt NotesBucket.Arn
+              - !Sub "${NotesBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # ============================================================================
+  # 3. Secrets Manager - Application Secret
+  # ============================================================================
+  AppSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Name: !Sub "${ProjectName}-app-secret"
+      Description: !Sub "Application SECRET_KEY for ${ProjectName}"
+      GenerateSecretString:
+        SecretStringLength: 64
+        ExcludePunctuation: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 4. Security Groups (Strict Inbound Chain)
+  # ============================================================================
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${ProjectName} Application Load Balancer"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: "Allow HTTP port 80 traffic from the internet"
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: "Allow outbound traffic"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-alb-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AppSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${ProjectName} application instances"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          SourceSecurityGroupId: !Ref AlbSg
+          Description: "Allow application port 8000 only from AlbSg"
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: "Allow outbound traffic (AWS APIs, RDS, ECR)"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-app-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "Security group for ${ProjectName} RDS MySQL instance"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref AppSg
+          Description: "Allow MySQL port 3306 only from AppSg"
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-db-sg"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 5. RDS MySQL 8 Database & Subnet Group
+  # ============================================================================
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub "${ProjectName}-db-subnet-group"
+      DBSubnetGroupDescription: !Sub "Database subnet group for ${ProjectName}"
+      SubnetIds: !Ref SubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-db-subnet-group"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      DBInstanceIdentifier: !Sub "${ProjectName}-db"
+      DBName: cloudnotes
+      Engine: mysql
+      EngineVersion: "8.0"
+      DBInstanceClass: !Ref DBInstanceClass
+      AllocatedStorage: "20"
+      StorageType: gp3
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      BackupRetentionPeriod: 7
+      DeletionProtection: false
+      DeleteAutomatedBackups: true
+      ManageMasterUserPassword: true
+      MasterUsername: cloudnotesadmin
+      VPCSecurityGroups:
+        - !Ref DbSg
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-db"
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 6. CloudWatch Log Group
+  # ============================================================================
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/cloudnotes/${ProjectName}"
+      RetentionInDays: 14
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ============================================================================
+  # 7. IAM Role and Instance Profile
+  # ============================================================================
+  AppInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-instance-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-least-privilege-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # S3 read, write, and delete on notes bucket only
+              - Sid: S3BucketListAndLocation
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource: !GetAtt NotesBucket.Arn
+
+              - Sid: S3ObjectOperations
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub "${NotesBucket.Arn}/*"
+
+              # Secrets Manager: read the two secrets only (App Secret and RDS Secret)
+              - Sid: SecretsManagerRead
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref AppSecret
+                  - !GetAtt DBInstance.MasterUserSecret.SecretArn
+
+              # ECR: authentication token (must be *) and image pull from this repo only
+              - Sid: EcrAuthorizationToken
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: "*"
+
+              - Sid: EcrPullRepositoryImages
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource: !GetAtt EcrRepository.Arn
+
+              # CloudWatch Logs: stream writes to this project's log group only
+              - Sid: CloudWatchLogsLogging
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !GetAtt AppLogGroup.Arn
+                  - !Sub "${AppLogGroup.Arn}:*"
+
+              # Read-only metadata queries for the /api/status endpoint
+              - Sid: StatusPageMonitoringReadOnly
+                Effect: Allow
+                Action:
+                  - autoscaling:DescribeAutoScalingGroups
+                  - cloudwatch:GetMetricStatistics
+                  - rds:DescribeDBInstances
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${ProjectName}-instance-profile"
+      Path: /
+      Roles:
+        - !Ref AppInstanceRole
+
+# ==============================================================================
+# Outputs
+# ==============================================================================
+Outputs:
+  ProjectName:
+    Description: Name of the Cloud Notes project
+    Value: !Ref ProjectName
+
+  VpcId:
+    Description: VPC ID where resources reside
+    Value: !Ref VpcId
+
+  SubnetIds:
+    Description: Subnet IDs associated with the stack
+    Value: !Join [",", !Ref SubnetIds]
+
+  EcrRepositoryUri:
+    Description: URI of the Amazon ECR repository for Docker image pushes
+    Value: !GetAtt EcrRepository.RepositoryUri
+    Export:
+      Name: !Sub "${ProjectName}-EcrRepositoryUri"
+
+  EcrRepositoryArn:
+    Description: ARN of the Amazon ECR repository
+    Value: !GetAtt EcrRepository.Arn
+
+  S3BucketName:
+    Description: Name of the Amazon S3 storage bucket for notes and attachments
+    Value: !Ref NotesBucket
+    Export:
+      Name: !Sub "${ProjectName}-S3BucketName"
+
+  S3BucketArn:
+    Description: ARN of the Amazon S3 storage bucket
+    Value: !GetAtt NotesBucket.Arn
+
+  AppSecretArn:
+    Description: ARN of the Secrets Manager secret for the application SECRET_KEY
+    Value: !Ref AppSecret
+    Export:
+      Name: !Sub "${ProjectName}-AppSecretArn"
+
+  DbSecretArn:
+    Description: ARN of the Secrets Manager secret created and managed by RDS for the master database password
+    Value: !GetAtt DBInstance.MasterUserSecret.SecretArn
+    Export:
+      Name: !Sub "${ProjectName}-DbSecretArn"
+
+  DbEndpointAddress:
+    Description: Connection endpoint address of the RDS MySQL database instance
+    Value: !GetAtt DBInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${ProjectName}-DbEndpointAddress"
+
+  DbEndpointPort:
+    Description: Connection port of the RDS MySQL database instance
+    Value: !GetAtt DBInstance.Endpoint.Port
+    Export:
+      Name: !Sub "${ProjectName}-DbEndpointPort"
+
+  DbName:
+    Description: Database name hosted on the RDS MySQL instance
+    Value: cloudnotes
+
+  AlbSecurityGroupId:
+    Description: Security Group ID for the Application Load Balancer
+    Value: !Ref AlbSg
+    Export:
+      Name: !Sub "${ProjectName}-AlbSecurityGroupId"
+
+  AppSecurityGroupId:
+    Description: Security Group ID for the application EC2 instances
+    Value: !Ref AppSg
+    Export:
+      Name: !Sub "${ProjectName}-AppSecurityGroupId"
+
+  DbSecurityGroupId:
+    Description: Security Group ID for the RDS MySQL database
+    Value: !Ref DbSg
+    Export:
+      Name: !Sub "${ProjectName}-DbSecurityGroupId"
+
+  LogGroupName:
+    Description: CloudWatch Log Group name for application logs
+    Value: !Ref AppLogGroup
+    Export:
+      Name: !Sub "${ProjectName}-LogGroupName"
+
+  LogGroupArn:
+    Description: CloudWatch Log Group ARN for application logs
+    Value: !GetAtt AppLogGroup.Arn
+
+  InstanceRoleArn:
+    Description: IAM Role ARN for application EC2 instances
+    Value: !GetAtt AppInstanceRole.Arn
+
+  InstanceProfileArn:
+    Description: IAM Instance Profile ARN for application EC2 instances
+    Value: !GetAtt AppInstanceProfile.Arn
+    Export:
+      Name: !Sub "${ProjectName}-InstanceProfileArn"
+
+  InstanceProfileName:
+    Description: IAM Instance Profile Name for application EC2 instances
+    Value: !Ref AppInstanceProfile

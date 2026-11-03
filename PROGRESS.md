@@ -163,6 +163,37 @@
     - Added `test_stage7.py` covering Secrets Manager resolution, JSON logging, SPA fallback, and cookie security flags.
     - All 157 backend tests passing on SQLite.
 
+- **Stage 8A: Infrastructure as Code & AWS Foundation Template (`infra/stack.yaml`)**
+  - **CloudFormation Template** (`infra/stack.yaml`):
+    - Target AWS region: `ap-south-1` (Mumbai).
+    - Fully parameterized with 9 parameters: `ProjectName` (default `cloudnotes`), `VpcId`, `SubnetIds` (list of public subnets across AZs), `AlertEmail`, `ImageTag` (default `latest`), `InstanceType` (default `t3.micro`), `DBInstanceClass` (default `db.t3.micro`), `DesiredCapacity` (default `0`), `MaxCapacity` (default `2`).
+    - **ECR Repository** (`EcrRepository`): Image scan on push enabled, lifecycle policy retaining 5 latest images, `EmptyOnDelete: true`, `DeletionPolicy: Delete`.
+    - **S3 Bucket & Policy** (`NotesBucket`, `NotesBucketPolicy`): All public access blocked, bucket versioning enabled, AES256 server-side encryption default, lifecycle rules expiring non-current versions at 30 days and aborting incomplete multipart uploads at 7 days, policy denying non-TLS requests (`aws:SecureTransport: false`), `DeletionPolicy: Retain`.
+    - **Secrets Manager** (`AppSecret`): Generates 64-character random alphanumeric string for application `SECRET_KEY`, `DeletionPolicy: Delete`. Database password managed by RDS via `ManageMasterUserPassword: true`.
+    - **Security Groups Inbound Chain**:
+      - `AlbSg`: TCP port 80 from internet (`0.0.0.0/0`).
+      - `AppSg`: TCP port 8000 only from `AlbSg`.
+      - `DbSg`: TCP port 3306 only from `AppSg`.
+      - No other inbound rules.
+    - **RDS MySQL 8** (`DBSubnetGroup`, `DBInstance`): Engine MySQL 8.0, 20 GB gp3 storage, single-AZ (`MultiAZ: false`), private (`PubliclyAccessible: false`), encrypted storage (`StorageEncrypted: true`), 7-day automated backups, deletion protection off, `DeleteAutomatedBackups: true`, skip final snapshot with `DeletionPolicy: Delete`.
+    - **CloudWatch Log Group** (`AppLogGroup`): Retention period 14 days, `DeletionPolicy: Delete`.
+    - **IAM Role & Instance Profile** (`AppInstanceRole`, `AppInstanceProfile`): Least-privilege inline policy scoped to specific ARNs:
+      - S3: `s3:ListBucket`, `s3:GetBucketLocation` on bucket ARN; `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` on bucket objects ARN (`/*`).
+      - Secrets Manager: `secretsmanager:GetSecretValue` on `AppSecret` and RDS master secret ARN only.
+      - ECR: `ecr:BatchCheckLayerAvailability`, `ecr:GetDownloadUrlForLayer`, `ecr:BatchGetImage` on ECR repo ARN only; `ecr:GetAuthorizationToken` on `*`.
+      - CloudWatch Logs: `logs:CreateLogStream`, `logs:PutLogEvents`, `logs:DescribeLogStreams` on project log group ARN.
+      - Status Page: `autoscaling:DescribeAutoScalingGroups`, `cloudwatch:GetMetricStatistics`, `rds:DescribeDBInstances` on `*` (read-only monitoring APIs).
+    - **Outputs**: Defined exports for all resource identifiers, ARNs, database endpoints, security group IDs, and IAM profile names required by subsequent stages.
+  - **Infrastructure Documentation** (`infra/README.md`):
+    - Plain-language explanation of each resource, architectural role, and security configuration.
+    - Explicit explanation of security group inbound chaining and least privilege IAM permissions.
+    - Step-by-step template validation commands.
+    - Honest documentation of S3 teardown and manual bucket cleanup procedures (`aws s3 rm` and `aws s3 rb`).
+  - **Automated Validation & Tests** (`backend/tests/test_stage8a.py`):
+    - 11 comprehensive automated tests validating template format, parameters, resources, security group chaining, IAM policies, S3 lifecycle, and outputs.
+    - Total test suite: 168 tests passing across all suites.
+    - **No resources deployed; template creation and validation only.**
+
 ## How to Run
 
 ### Local Development
@@ -200,7 +231,7 @@ docker compose up --build
 
 ## Next
 
-- Stage 8: Infrastructure as Code & AWS Deployment (AWS CloudFormation template, ALB, Auto Scaling group, private RDS MySQL, S3 storage, CloudWatch alarms).
+- Stage 8B: Auto Scaling Group, Launch Template, Application Load Balancer, CloudWatch Alarms & Deployment Execution.
 
 ## Decisions
 
@@ -209,8 +240,13 @@ docker compose up --build
 - `COOKIE_SECURE` is explicitly configurable via environment variable (default `false`) so Docker Compose local testing over HTTP functions properly, while production CloudFormation sets `COOKIE_SECURE=true`.
 - SPA fallback serves `index.html` for non-API routes when `FRONTEND_DIST_DIR` is present, while strictly returning JSON 404s for any `/api/*` path.
 - `docker-entrypoint.sh` uses POSIX shell with retry loop (30 attempts x 2s) for database initialization to handle MySQL startup latency.
+- S3 `DeletionPolicy: Retain` prevents CloudFormation stack deletion failure if the bucket has objects or versions; documented honest manual bucket emptying and deletion in `infra/README.md`.
+- RDS `ManageMasterUserPassword: true` allows RDS to generate, encrypt, and manage master database credentials in Secrets Manager without exposing passwords in templates or outputs.
+- ECR `EmptyOnDelete: true` allows CloudFormation to cleanly remove the repository upon stack deletion without manual image deletion.
+- Security group inbound chain strictly enforces ALB (HTTP 80 from internet) -> App (port 8000 from AlbSg) -> DB (port 3306 from AppSg) with no other inbound rules.
 
 ## Known Issues & Pending Verifications
 
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment, and the host's existing Windows MySQL service requires administrator credentials. Live container startup (`docker compose up --build`) and direct MySQL test execution remain pending an active Docker runtime.
+- **AWS CLI & cfn-lint**: `aws` CLI and `cfn-lint` are not installed locally on this host environment. Template validity was verified via automated Python / PyYAML CloudFormation AST test suite (`backend/tests/test_stage8a.py`, 11/11 passed). Stack deployment and remote validation will run when AWS CLI and credentials are provided in Stage 8B.
 - `local_data/` is created on first storage write, not on startup (matches lazy initialization).

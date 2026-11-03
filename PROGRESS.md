@@ -436,10 +436,30 @@ docker compose up --build
     - **Outputs**: `LoadBalancerUrl`, `DashboardUrl`, `DbEndpoint` — all exported.
     - All resources tagged `Project=cloudnotes`.
     - **Stack Deployment & Status**:
-      - Successfully deployed `cloudnotes-app` to `ap-southeast-2` with `CREATE_COMPLETE`.
+      - Successfully deployed `cloudnotes-app` to `ap-southeast-2` with `CREATE_COMPLETE` (and subsequent `UPDATE_COMPLETE`).
       - `LoadBalancerUrl`: `http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com`
       - `DashboardUrl`: `https://ap-southeast-2.console.aws.amazon.com/cloudwatch/home?region=ap-southeast-2#dashboards:name=cloudnotes`
       - `DbEndpoint`: `cloudnotes-db.c5coiociogja.ap-southeast-2.rds.amazonaws.com`
+    - **Live End-to-End Application Verification**:
+      - **Target Group Health**: `aws elbv2 describe-target-health` verified instance `i-0dd205ed0567896a5` in target group `cloudnotes-tg` is **`healthy`**.
+      - **Public `/api/health`**: HTTP 200 with `{"status":"ok","version":"0.1.0"}`.
+      - **Public `/api/status`**: HTTP 200 with `{"availability_zone":"ap-southeast-2a","instance_id":"i-0dd205ed0567896a5","db_ok":true,"storage_ok":true,"uptime_seconds":...}`.
+      - **Live Browser Verification & Evidence**: Executed browser automation suite with headless Edge against the live ALB endpoint, verifying:
+        1. Login page and instant Demo login.
+        2. Note creation and Markdown editing ("Stage 10 AWS Verification Note").
+        3. Refresh and persistence verification across reloads.
+        4. Image attachment upload (`POST /api/attachments` -> status 201, confirmed stored in S3 at `users/1/attachments/`).
+        5. Note search via Command Palette (`Ctrl+K` / Search bar).
+        6. Dark mode toggle activation.
+        7. System Status view verification (`/status`) with healthy RDS and S3 status.
+      - **Captured Screenshots** (in `docs/screenshots/`):
+        - `stage10-01-login.png`: Sign In page with Demo login button.
+        - `stage10-02-demo-workspace.png`: Workspace home after demo login.
+        - `stage10-03-created-note.png`: Created and edited note in editor.
+        - `stage10-04-image-uploaded.png`: Note with uploaded image attachment in S3.
+        - `stage10-05-search.png`: Command palette note search.
+        - `stage10-06-dark-mode.png`: Dark mode theme active.
+        - `stage10-07-system-status.png`: System status page showing operational RDS and S3.
   - **Validation**:
     - `cfn-lint infra/02-app.yaml --region ap-southeast-2` — **0 errors, 0 warnings**.
     - `aws cloudformation validate-template` — **✅ valid**, confirms `CAPABILITY_NAMED_IAM`.
@@ -447,11 +467,10 @@ docker compose up --build
 
 ## Next
 
-- **Deployment Execution (Stage 10 Deploy Phase)**:
-  1. Deploy CloudFormation stack: `aws cloudformation deploy --template-file infra/stack.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_IAM --region ap-south-1 --parameter-overrides VpcId=<vpc-id> SubnetIds=<subnet-1>,<subnet-2> AlertEmail=<email> DesiredCapacity=1 MinCapacity=1`
-  2. Build and push Docker image to ECR: `.\scripts\push-image.ps1` (Windows) or `bash scripts/push-image.sh`
-  3. Verify: `aws ecr describe-images --repository-name cloudnotes-repo --region ap-south-1`
-  4. Open `LoadBalancerUrl`, test demo login, upload image, verify `/status` page.
+- **Stage 11: Load Testing and Performance Verification**
+  - Run Locust load test against the ALB endpoint (`http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com`).
+  - Observe CloudWatch Dashboard metrics: ASG CPU scaling, ALB response times (p99 < 500ms), error rates (< 1%).
+  - Verify Auto Scaling behavior under load.
 
 ## Decisions
 
@@ -488,6 +507,8 @@ docker compose up --build
   - **`CAPABILITY_NAMED_IAM` required**: The role is given an explicit name (`cloudnotes-instance-role`); deploy command must include `--capabilities CAPABILITY_NAMED_IAM`.
   - **ECR Pull Policy Resource format**: The IAM inline policy requires an IAM ARN format for ECR pull permissions (`arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cloudnotes`), avoiding hardcoded account IDs.
   - **RDS BackupRetentionDays**: Parameter default set to `1` to avoid AWS Free Tier limitation errors that reject retention periods greater than 1 day.
+  - **ASG HealthCheckGracePeriod**: Increased from 300 to 600 seconds in `infra/02-app.yaml` to ensure EC2 instances completing cold boot (installing Docker, pulling the ECR image, and running MySQL table migrations with advisory lock, taking ~370s) are not prematurely terminated by the Auto Scaling Group before becoming healthy on the ALB target group.
+  - **S3 Presigned URL Region Diagnosis**: Identified that `backend/app/config.py` defaults `AWS_REGION` to `ap-south-1` if unset. In `infra/02-app.yaml`, `-e AWS_DEFAULT_REGION=${!REGION}` was supplied to `docker run` instead of `-e AWS_REGION=${!REGION}`. S3 object upload, note persistence, and S3 storage write operate successfully (`aws s3 ls` confirms files in `users/1/...`), but presigned download redirects generate an authorization mismatch on region `ap-south-1` vs `ap-southeast-2`. Recommended fix for future container update: pass `-e AWS_REGION=${!REGION}` in `02-app.yaml` and update config default.
 
 - **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.

@@ -422,7 +422,7 @@ Resources:
       TargetGroupARNs:
         - !Ref AppTargetGroup
       HealthCheckType: ELB
-      HealthCheckGracePeriod: 300
+      HealthCheckGracePeriod: 600
       # 1-minute granularity group-level metrics for the dashboard.
       MetricsCollection:
         - Granularity: "1Minute"

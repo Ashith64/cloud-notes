@@ -176,7 +176,7 @@ Resources:
                   - ecr:BatchCheckLayerAvailability
                   - ecr:GetDownloadUrlForLayer
                   - ecr:BatchGetImage
-                Resource: !ImportValue {"Fn::Sub": "${ProjectName}-RepositoryUri"}
+                Resource: "arn:aws:ecr:ap-southeast-2:869606386865:repository/cloudnotes"
               # CloudWatch Logs: write application logs.
               - Sid: CloudWatchLogs
                 Effect: Allow

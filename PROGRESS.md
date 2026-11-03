@@ -415,7 +415,7 @@ docker compose up --build
       - `BackupRetentionPeriod` from parameter, `DeletionProtection: false`, `DeletionPolicy: Delete`.
     - **IAM** (`AppInstanceRole`, `AppInstanceProfile`):
       - Managed policy: `AmazonSSMManagedInstanceCore`.
-      - One inline policy (`cloudnotes-least-privilege`) with six statements: S3 bucket + object access, ECR auth token (`*`), ECR pull on repo ARN, CloudWatch Logs write, SSM GetParameter on `/cloudnotes/db-password` and `/cloudnotes/jwt-secret`, and read-only status-page APIs (`autoscaling:DescribeAutoScalingGroups`, `cloudwatch:GetMetricStatistics`, `rds:DescribeDBInstances`).
+      - One inline policy (`cloudnotes-least-privilege`) with six statements: S3 bucket + object access, ECR auth token (`*`), ECR pull on repo ARN (`arn:aws:ecr:ap-southeast-2:869606386865:repository/cloudnotes`), CloudWatch Logs write, SSM GetParameter on `/cloudnotes/db-password` and `/cloudnotes/jwt-secret`, and read-only status-page APIs (`autoscaling:DescribeAutoScalingGroups`, `cloudwatch:GetMetricStatistics`, `rds:DescribeDBInstances`).
     - **CloudWatch Log Group** (`AppLogGroup`): `/cloudnotes/app`, 7-day retention, `DeletionPolicy: Delete`.
     - **EC2 Launch Template** (`AppLaunchTemplate`):
       - AMI: `{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}` — latest AL2023 x86_64, resolved at deploy time, no hard-coded AMI ID.
@@ -482,6 +482,7 @@ docker compose up --build
   - **RDS in private subnets, EC2 in public subnets**: EC2 instances in public subnets get a public IP and can reach ECR, SSM and S3 endpoints directly over the internet without a NAT Gateway. The DB security group restricts MySQL (3306) to the app security group only; no internet path to the database exists.
   - **`EstimatedInstanceWarmup` on ScalingPolicy**: Placed as a top-level property of `AWS::AutoScaling::ScalingPolicy` (not inside `TargetTrackingConfiguration`) to pass cfn-lint E3002.
   - **`CAPABILITY_NAMED_IAM` required**: The role is given an explicit name (`cloudnotes-instance-role`); deploy command must include `--capabilities CAPABILITY_NAMED_IAM`.
+  - **ECR Pull Policy Resource format**: The IAM inline policy requires an IAM ARN format for ECR pull permissions (`arn:aws:ecr:ap-southeast-2:869606386865:repository/cloudnotes`), not the registry URI.
 
 - **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.

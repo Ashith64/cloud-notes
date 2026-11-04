@@ -1,0 +1,317 @@
+{
+    "metrics": {
+        "iteration_duration": {
+            "p(95)": 975.9314599999998,
+            "avg": 678.1330718120803,
+            "min": 371.5175,
+            "med": 656.2345,
+            "max": 1249.5196,
+            "p(90)": 908.50342
+        },
+        "group_duration": {
+            "max": 382.8525,
+            "p(90)": 138.19162000000009,
+            "p(95)": 181.92273000000017,
+            "avg": 59.6377875000001,
+            "min": 3.1966,
+            "med": 43.87405
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 1192,
+            "thresholds": {
+                "rate<0.01": false
+            },
+            "value": 0
+        },
+        "http_req_duration{expected_response:true}": {
+            "max": 379.7206,
+            "p(90)": 134.79742000000002,
+            "p(95)": 178.74322000000004,
+            "avg": 57.755944043624055,
+            "min": 1.5734,
+            "med": 41.99485
+        },
+        "checks": {
+            "passes": 2086,
+            "fails": 0,
+            "value": 1
+        },
+        "http_req_connecting": {
+            "max": 7.3608,
+            "p(90)": 2.0206100000000005,
+            "p(95)": 2.4645,
+            "avg": 1.2098725671140937,
+            "min": 0,
+            "med": 1.08705
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_blocked": {
+            "max": 7.3608,
+            "p(90)": 2.152060000000001,
+            "p(95)": 2.5968150000000008,
+            "avg": 1.3359302013422816,
+            "min": 0,
+            "med": 1.1689
+        },
+        "note_create_duration": {
+            "avg": 56.83221476510067,
+            "min": 28,
+            "med": 54,
+            "max": 142,
+            "p(90)": 79,
+            "p(95)": 95.19999999999999
+        },
+        "iterations": {
+            "count": 149,
+            "rate": 3.6979824110752992
+        },
+        "http_req_waiting": {
+            "max": 376.622,
+            "p(90)": 134.08853000000005,
+            "p(95)": 178.04729,
+            "avg": 56.62393104026841,
+            "min": 1.018,
+            "med": 40.576800000000006
+        },
+        "note_update_duration": {
+            "avg": 72.30201342281879,
+            "min": 27,
+            "med": 63,
+            "max": 189,
+            "p(90)": 124.20000000000002,
+            "p(95)": 136.2
+        },
+        "http_req_sending": {
+            "p(90)": 0.35243000000000313,
+            "p(95)": 0.6303450000000002,
+            "avg": 0.07277072147651008,
+            "min": 0,
+            "med": 0,
+            "max": 1.963
+        },
+        "http_req_receiving": {
+            "max": 16.5221,
+            "p(90)": 2.53601,
+            "p(95)": 3.829635000000001,
+            "avg": 1.0592422818791951,
+            "min": 0,
+            "med": 0.6951
+        },
+        "vus": {
+            "value": 1,
+            "min": 1,
+            "max": 5
+        },
+        "http_req_duration": {
+            "p(95)": 178.74322000000004,
+            "avg": 57.755944043624055,
+            "min": 1.5734,
+            "med": 41.99485,
+            "max": 379.7206,
+            "p(90)": 134.79742000000002,
+            "thresholds": {
+                "p(95)<800": false
+            }
+        },
+        "failed_requests": {
+            "passes": 0,
+            "fails": 1192,
+            "value": 0
+        },
+        "data_sent": {
+            "count": 434881,
+            "rate": 10793.169724233807
+        },
+        "data_received": {
+            "rate": 134390.21538275605,
+            "count": 5414883
+        },
+        "vus_max": {
+            "value": 5,
+            "min": 5,
+            "max": 5
+        },
+        "http_reqs": {
+            "count": 1192,
+            "rate": 29.583859288602394
+        }
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "01_Login": {
+                "groups": {},
+                "checks": {
+                        "login status is 200": {
+                            "name": "login status is 200",
+                            "path": "::01_Login::login status is 200",
+                            "id": "ab2fb1e9138e4aa0db95abf5356e53d4",
+                            "passes": 149,
+                            "fails": 0
+                        },
+                        "user id returned": {
+                            "name": "user id returned",
+                            "path": "::01_Login::user id returned",
+                            "id": "9d8102082e659f6a16b1c13f298a1b35",
+                            "passes": 149,
+                            "fails": 0
+                        }
+                    },
+                "name": "01_Login",
+                "path": "::01_Login",
+                "id": "8633b286339711fbe75b5eb28ace0628"
+            },
+            "02_ListNotes": {
+                "name": "02_ListNotes",
+                "path": "::02_ListNotes",
+                "id": "23bc50f225e370ce7e32574b6a289600",
+                "groups": {},
+                "checks": {
+                        "list notes status is 200": {
+                            "name": "list notes status is 200",
+                            "path": "::02_ListNotes::list notes status is 200",
+                            "id": "e17c7880c31a3f42b7c5c60cc9947e4b",
+                            "passes": 149,
+                            "fails": 0
+                        },
+                        "notes returned as array": {
+                            "id": "58df708fc2f48ef2edd888c5679b8247",
+                            "passes": 149,
+                            "fails": 0,
+                            "name": "notes returned as array",
+                            "path": "::02_ListNotes::notes returned as array"
+                        }
+                    }
+            },
+            "03_OpenNote": {
+                "checks": {
+                    "open note status is 200": {
+                        "path": "::03_OpenNote::open note status is 200",
+                        "id": "819b8f96e033bbf62c461f5b23ad779e",
+                        "passes": 149,
+                        "fails": 0,
+                        "name": "open note status is 200"
+                    },
+                    "note title present": {
+                        "name": "note title present",
+                        "path": "::03_OpenNote::note title present",
+                        "id": "f77416ead5c3158f491d262793e74bec",
+                        "passes": 149,
+                        "fails": 0
+                    }
+                },
+                "name": "03_OpenNote",
+                "path": "::03_OpenNote",
+                "id": "aa656e42e1b5821eca57178fce9c4447",
+                "groups": {}
+            },
+            "04_CreateNote": {
+                "groups": {},
+                "checks": {
+                        "create note status is 201": {
+                            "name": "create note status is 201",
+                            "path": "::04_CreateNote::create note status is 201",
+                            "id": "bb2bc18262efda4235eef202814dc152",
+                            "passes": 149,
+                            "fails": 0
+                        },
+                        "created note id present": {
+                            "fails": 0,
+                            "name": "created note id present",
+                            "path": "::04_CreateNote::created note id present",
+                            "id": "bf76d1668a93a6615c5e757372be4110",
+                            "passes": 149
+                        }
+                    },
+                "name": "04_CreateNote",
+                "path": "::04_CreateNote",
+                "id": "4b7fdd14ddbc546dc491f12c8b4dac8e"
+            },
+            "05_UpdateNote": {
+                "name": "05_UpdateNote",
+                "path": "::05_UpdateNote",
+                "id": "6fac34473eeb040de00de7ae2b8d9859",
+                "groups": {},
+                "checks": {
+                        "update note status is 200": {
+                            "id": "8e026f88dc2cea5eea0463c9a9c4b23d",
+                            "passes": 149,
+                            "fails": 0,
+                            "name": "update note status is 200",
+                            "path": "::05_UpdateNote::update note status is 200"
+                        },
+                        "updated version incremented": {
+                            "fails": 0,
+                            "name": "updated version incremented",
+                            "path": "::05_UpdateNote::updated version incremented",
+                            "id": "8e15d81cab795eb2b3c35f4513aacd4b",
+                            "passes": 149
+                        }
+                    }
+            },
+            "06_Search": {
+                "name": "06_Search",
+                "path": "::06_Search",
+                "id": "6b04240457d8620e3c6c118c5ab9db45",
+                "groups": {},
+                "checks": {
+                        "search status is 200": {
+                            "name": "search status is 200",
+                            "path": "::06_Search::search status is 200",
+                            "id": "74d74de856b8cce41868eb0b9b4cb3f9",
+                            "passes": 149,
+                            "fails": 0
+                        }
+                    }
+            },
+            "07_SystemStatus": {
+                "id": "2febba06203ac44ce9f3786df5d754a4",
+                "groups": {},
+                "checks": {
+                        "status endpoint is 200": {
+                            "name": "status endpoint is 200",
+                            "path": "::07_SystemStatus::status endpoint is 200",
+                            "id": "ac30bfdac98e8d88f404a47697019986",
+                            "passes": 149,
+                            "fails": 0
+                        },
+                        "db and storage ok": {
+                            "passes": 149,
+                            "fails": 0,
+                            "name": "db and storage ok",
+                            "path": "::07_SystemStatus::db and storage ok",
+                            "id": "e07511339a8dca836308adbdc1ac9d4c"
+                        }
+                    },
+                "name": "07_SystemStatus",
+                "path": "::07_SystemStatus"
+            },
+            "08_PublicHealth": {
+                "name": "08_PublicHealth",
+                "path": "::08_PublicHealth",
+                "id": "684d635848844d0c3610513ed4c214c1",
+                "groups": {},
+                "checks": {
+                        "health endpoint is 200": {
+                            "name": "health endpoint is 200",
+                            "path": "::08_PublicHealth::health endpoint is 200",
+                            "id": "ff9fd7bf9e5f3490b3f57571fe5b89d6",
+                            "passes": 149,
+                            "fails": 0
+                        }
+                    }
+            }
+        },
+        "checks": {}
+    }
+}

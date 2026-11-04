@@ -57,7 +57,7 @@ def _resolve_secrets() -> dict:
         # Dev/test: use environment variables directly.
         return {}
 
-    region = os.environ.get("AWS_REGION", "ap-south-1")
+    region = os.environ.get("AWS_REGION", "ap-southeast-2")
     log.info("Fetching secrets from AWS Secrets Manager (region=%s)…", region)
 
     # --- Database credentials ---
@@ -115,7 +115,7 @@ class Config:
     STORAGE_BACKEND: str = os.environ.get("STORAGE_BACKEND", "local")
     LOCAL_STORAGE_PATH: str = os.environ.get("LOCAL_STORAGE_PATH", "./local_data")
     S3_BUCKET: str = os.environ.get("S3_BUCKET", "")
-    AWS_REGION: str = os.environ.get("AWS_REGION", "ap-south-1")
+    AWS_REGION: str = os.environ.get("AWS_REGION", "ap-southeast-2")
     JWT_EXPIRY_DAYS: int = int(os.environ.get("JWT_EXPIRY_DAYS", "7"))
     ASG_NAME: str = os.environ.get("ASG_NAME", "")
     DB_INSTANCE_ID: str = os.environ.get("DB_INSTANCE_ID", "")

@@ -41,7 +41,7 @@ _CACHE_TTL = 10.0  # seconds
 # IMDSv2 helpers
 # ---------------------------------------------------------------------------
 
-def _imds_token(timeout: float = 1.0) -> str | None:
+def _imds_token(timeout: float = 0.5) -> str | None:
     """Fetch an IMDSv2 session token.  Returns None on any failure."""
     try:
         import urllib.request
@@ -72,11 +72,18 @@ def _imds_get(path: str, token: str, timeout: float = 1.0) -> str | None:
 
 def _get_ec2_metadata() -> tuple[str, str]:
     """Return (instance_id, availability_zone); fallback to 'local'."""
-    token = _imds_token()
+    # Fast path: in local development, skip IMDS probing to avoid Windows link-local connect latency
+    try:
+        if current_app and current_app.config.get("STORAGE_BACKEND", "local") == "local":
+            return "local", "local"
+    except Exception:
+        pass
+
+    token = _imds_token(timeout=0.5)
     if not token:
         return "local", "local"
-    instance_id = _imds_get("instance-id", token) or "local"
-    az = _imds_get("placement/availability-zone", token) or "local"
+    instance_id = _imds_get("instance-id", token, timeout=0.5) or "local"
+    az = _imds_get("placement/availability-zone", token, timeout=0.5) or "local"
     return instance_id, az
 
 
@@ -92,7 +99,8 @@ def _get_asg_stats(asg_name: str) -> tuple[int | None, float | None]:
         import boto3
         from datetime import datetime, timedelta, timezone
 
-        session = boto3.Session()
+        region = current_app.config.get("AWS_REGION") if current_app else None
+        session = boto3.Session(region_name=region) if region else boto3.Session()
         asg_client = session.client("autoscaling")
         cw_client = session.client("cloudwatch")
 
@@ -104,9 +112,9 @@ def _get_asg_stats(asg_name: str) -> tuple[int | None, float | None]:
         instances = [i for i in groups[0].get("Instances", []) if i.get("LifecycleState") == "InService"]
         running = len(instances)
 
-        # Average CPUUtilization over the last 5 minutes
+        # Average CPUUtilization over the last 10 minutes
         now = datetime.now(timezone.utc)
-        start = now - timedelta(minutes=5)
+        start = now - timedelta(minutes=10)
         cw_resp = cw_client.get_metric_statistics(
             Namespace="AWS/EC2",
             MetricName="CPUUtilization",
@@ -117,7 +125,11 @@ def _get_asg_stats(asg_name: str) -> tuple[int | None, float | None]:
             Statistics=["Average"],
         )
         datapoints = cw_resp.get("Datapoints", [])
-        avg_cpu = datapoints[-1]["Average"] if datapoints else None
+        if datapoints:
+            sorted_dp = sorted(datapoints, key=lambda d: d.get("Timestamp"))
+            avg_cpu = round(sorted_dp[-1]["Average"], 2)
+        else:
+            avg_cpu = None
 
         return running, avg_cpu
     except Exception as exc:
@@ -131,7 +143,8 @@ def _get_last_backup(db_instance_id: str) -> str | None:
         return None
     try:
         import boto3
-        rds = boto3.client("rds")
+        region = current_app.config.get("AWS_REGION") if current_app else None
+        rds = boto3.client("rds", region_name=region) if region else boto3.client("rds")
         resp = rds.describe_db_instances(DBInstanceIdentifier=db_instance_id)
         instances = resp.get("DBInstances", [])
         if not instances:

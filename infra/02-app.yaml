@@ -316,6 +316,8 @@ Resources:
                   --region ${!REGION})
 
                 DB_ENDPOINT="${DbEndpoint}"
+                ASG_NAME="cloudnotes-asg"
+                DB_INSTANCE_ID="cloudnotes-db"
 
                 # ---- Run the application container ----
                 docker run -d \
@@ -326,7 +328,10 @@ Resources:
                   -e COOKIE_SECURE=false \
                   -e STORAGE_BACKEND=s3 \
                   -e S3_BUCKET="${BucketName}" \
+                  -e AWS_REGION=${!REGION} \
                   -e AWS_DEFAULT_REGION=${!REGION} \
+                  -e ASG_NAME=${!ASG_NAME} \
+                  -e DB_INSTANCE_ID=${!DB_INSTANCE_ID} \
                   -e DATABASE_URL="mysql+pymysql://admin:${!DB_PASSWORD}@${!DB_ENDPOINT}/cloudnotes?charset=utf8mb4" \
                   -e SECRET_KEY="${!JWT_SECRET}" \
                   --log-driver=awslogs \

@@ -465,12 +465,63 @@ docker compose up --build
     - `aws cloudformation validate-template` — **✅ valid**, confirms `CAPABILITY_NAMED_IAM`.
     - All **207 backend tests pass** cleanly.
 
+- **Stage 10: Final Fixes & Live AWS Verification (Completed)**:
+  - **S3 Presigned URL Region Mismatch Fixed**:
+    - Root cause: `backend/app/config.py` defaulted `AWS_REGION` to `ap-south-1` if unset, while `infra/02-app.yaml` passed `-e AWS_DEFAULT_REGION=${!REGION}` without `-e AWS_REGION=${!REGION}`.
+    - Fix: Updated `backend/app/config.py` default to `ap-southeast-2`. Updated `infra/02-app.yaml` LaunchTemplate UserData to pass both `-e AWS_REGION=${!REGION}` and `-e AWS_DEFAULT_REGION=${!REGION}`.
+    - Live verification: Uploaded image attachment (`POST /api/attachments`) and downloaded via presigned URL redirect (`GET /api/attachments/{id}`). Successfully retrieved image bytes directly from `https://cloudnotes-869606386865-ap-southeast-2.s3.amazonaws.com/...` with HTTP 200.
+  - **System Status Null Fields (`running_servers`, `average_cpu`, `last_backup`) Fixed**:
+    - Root cause: Container environment omitted `ASG_NAME` and `DB_INSTANCE_ID` flags.
+    - Fix: Added `ASG_NAME="cloudnotes-asg"` and `DB_INSTANCE_ID="cloudnotes-db"` to UserData in `infra/02-app.yaml` and live container runtime. Updated `backend/app/routes/status.py` to use `AWS_REGION` from config and a 10-minute lookback for CloudWatch EC2 metrics. Added local development fast-path to prevent link-local connect latency on non-cloud environments.
+    - Live verification: `GET /api/status` on the live ALB returned complete operational data:
+      - `instance_id`: `"i-0dd205ed0567896a5"`
+      - `availability_zone`: `"ap-southeast-2a"`
+      - `running_servers`: `1` (live ASG InService count)
+      - `average_cpu`: `0.57%` (live CloudWatch metric)
+      - `last_backup`: `"2026-11-04T11:33:10+00:00"` (live RDS `LatestRestorableTime`)
+      - `db_ok`: `true`
+      - `storage_ok`: `true`
+  - Marked **Stage 10 fully complete**.
+
+- **Stage 11: Load Testing Setup & Local Verification (In Progress)**:
+  - **k6 Load Testing Script** (`loadtest/script.js`):
+    - Configured with the exact 8 workload operations from the project guide:
+      1. `POST /api/auth/demo` (Demo authentication & session cookie)
+      2. `GET /api/notes?view=all&sort=updated` (List notes)
+      3. `GET /api/notes/{id}` (Open note detail)
+      4. `POST /api/notes` (Create note with front-matter & tags)
+      5. `PATCH /api/notes/{id}` (Update note body & title)
+      6. `GET /api/notes?q=model` (Search notes)
+      7. `GET /api/status` (Operational status endpoint check)
+      8. `GET /api/health` (Lightweight public ALB health check)
+    - Enforced `X-Requested-With: cloudnotes` (CSRF guard) and `Content-Type: application/json`.
+    - Pacing includes 1s think time between user iterations.
+    - Workload stages: 1m ramp to 10 VUs, 2m ramp to 40 VUs, 5m plateau at 40 VUs, 1m ramp down to 0 VUs (total 9 minutes).
+    - Thresholds: `http_req_failed < 0.01` (< 1% error rate) and `http_req_duration p(95) < 800ms`.
+  - **Documentation** (`loadtest/README.md`):
+    - Documented workload architecture, stages, thresholds, local test commands, and exact Run A (MaxSize=1) and Run B (MaxSize=2) AWS execution steps.
+  - **Tool Installation**:
+    - Installed official standalone `k6` v2.3.0 binary at `backend/.venv/Scripts/k6.exe`.
+  - **Local Verification Against localhost:8000**:
+    - Executed local load test with multi-threaded Flask server and JSON export (`loadtest/results/local-summary.json`).
+    - **Results**:
+      - Total HTTP requests: 1,192
+      - Checks succeeded: 2,086 / 2,086 (100.00%)
+      - Failed requests rate: 0.00% (Threshold: < 1.00%)
+      - p95 response time: 178.74 ms (Threshold: < 800 ms)
+      - All 8 scenario groups passed cleanly.
+
 ## Next
 
-- **Stage 11: Load Testing and Performance Verification**
-  - Run Locust load test against the ALB endpoint (`http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com`).
-  - Observe CloudWatch Dashboard metrics: ASG CPU scaling, ALB response times (p99 < 500ms), error rates (< 1%).
-  - Verify Auto Scaling behavior under load.
+- **Awaiting User Approval for AWS Load Testing**:
+  - **Run A (MaxSize=1 Baseline)**:
+    - Command: `aws autoscaling update-auto-scaling-group --auto-scaling-group-name cloudnotes-asg --max-size 1 --region ap-southeast-2`
+    - Run: `backend\.venv\Scripts\k6.exe run -e TARGET_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com --summary-export=loadtest/results/run-a-summary.json loadtest/script.js`
+    - Capture single-node performance and CloudWatch metrics.
+  - **Run B (MaxSize=2 Auto-Scaling)**:
+    - Command: `aws autoscaling update-auto-scaling-group --auto-scaling-group-name cloudnotes-asg --max-size 2 --region ap-southeast-2`
+    - Run: `backend\.venv\Scripts\k6.exe run -e TARGET_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com --summary-export=loadtest/results/run-b-summary.json loadtest/script.js`
+    - Observe automated scale-out to 2 instances and latency stabilization.
 
 ## Decisions
 
@@ -508,7 +559,8 @@ docker compose up --build
   - **ECR Pull Policy Resource format**: The IAM inline policy requires an IAM ARN format for ECR pull permissions (`arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/cloudnotes`), avoiding hardcoded account IDs.
   - **RDS BackupRetentionDays**: Parameter default set to `1` to avoid AWS Free Tier limitation errors that reject retention periods greater than 1 day.
   - **ASG HealthCheckGracePeriod**: Increased from 300 to 600 seconds in `infra/02-app.yaml` to ensure EC2 instances completing cold boot (installing Docker, pulling the ECR image, and running MySQL table migrations with advisory lock, taking ~370s) are not prematurely terminated by the Auto Scaling Group before becoming healthy on the ALB target group.
-  - **S3 Presigned URL Region Diagnosis**: Identified that `backend/app/config.py` defaults `AWS_REGION` to `ap-south-1` if unset. In `infra/02-app.yaml`, `-e AWS_DEFAULT_REGION=${!REGION}` was supplied to `docker run` instead of `-e AWS_REGION=${!REGION}`. S3 object upload, note persistence, and S3 storage write operate successfully (`aws s3 ls` confirms files in `users/1/...`), but presigned download redirects generate an authorization mismatch on region `ap-south-1` vs `ap-southeast-2`. Recommended fix for future container update: pass `-e AWS_REGION=${!REGION}` in `02-app.yaml` and update config default.
+  - **S3 Presigned URL Region Mismatch (Resolved)**: `backend/app/config.py` default updated to `ap-southeast-2` and `infra/02-app.yaml` updated to pass `-e AWS_REGION=${!REGION}` and `-e AWS_DEFAULT_REGION=${!REGION}`. Verified working with live uploads and presigned downloads directly from S3.
+  - **System Status Metrics (Resolved)**: Added `-e ASG_NAME=cloudnotes-asg` and `-e DB_INSTANCE_ID=cloudnotes-db` to `infra/02-app.yaml` and active container environment. Verified live `/api/status` endpoint returns non-null values for `running_servers`, `average_cpu`, and `last_backup`.
 
 - **Scripts not yet executed**: `scripts/push-image.ps1` and `scripts/push-image.sh` are prepared and tested but have **not** been run. Execution requires a deployed CloudFormation stack (ECR repository does not exist locally), Docker Desktop, and AWS CLI with valid credentials.
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.

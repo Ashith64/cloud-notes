@@ -20,6 +20,7 @@ instance/
 
 # Storage & uploads
 local_data/
+scratch/
 
 # Build artifacts
 dist/

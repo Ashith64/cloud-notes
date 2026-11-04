@@ -605,3 +605,11 @@ docker compose up --build
 - **Docker & MySQL Verification**: Docker CLI is not installed / accessible in the local host environment. Live container startup (`docker compose up --build`) remains pending an active Docker runtime.
 - **AWS CLI & cfn-lint**: `cfn-lint` and `awscli` are now installed in `backend/.venv`. `infra/01-foundation.yaml` validated with 0 errors via `cfn-lint`. Live CloudFormation deployment requires active AWS credentials.
 - `local_data/` is created on first storage write, not on startup (matches lazy initialization).
+
+## Stage 13: Project Publication to GitHub
+- **Status**: Completed
+- **Remote**: `https://github.com/Ashith64/cloud-notes.git`
+- **Branch**: `main`
+- **Security Audit**: Verified `.gitignore` prevents exposure of `.env`, `.venv/`, `node_modules/`, `dev.db`, local uploads, and build caches. Ran secret scan confirming zero hard-coded credentials or AWS keys.
+- **Published Deliverables**: Full React 18 TypeScript frontend, Flask 3 backend, CloudFormation infrastructure templates (VPC, RDS, S3, ALB, ASG), Docker configs, deployment scripts, 151 backend unit/integration tests, k6 load testing suite & local summary benchmark, architecture/security/cost/viva documentation, and full screenshot verification evidence.
+

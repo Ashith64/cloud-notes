@@ -7,8 +7,8 @@ const failureRate = new Rate('failed_requests');
 const noteCreateLatency = new Trend('note_create_duration');
 const noteUpdateLatency = new Trend('note_update_duration');
 
-// Target endpoint: defaults to local server, overridable via TARGET_URL environment variable
-const BASE_URL = __ENV.TARGET_URL || 'http://127.0.0.1:8000';
+// Target endpoint: defaults to local server, overridable via BASE_URL environment variable
+const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:8000';
 
 // Guide workload stages:
 // - 1 minute ramp up to 10 users

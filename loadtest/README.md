@@ -64,10 +64,10 @@ Before executing against cloud infrastructure, verify the workload against a loc
 python wsgi.py
 
 # 2. Run quick smoke validation (25 seconds)
-backend\.venv\Scripts\k6.exe run -e QUICK=true loadtest/script.js
+backend\.venv\Scripts\k6.exe run -e QUICK=true -e BASE_URL=http://127.0.0.1:8000 loadtest/script.js
 
 # 3. Run full local 9-minute test with JSON export
-backend\.venv\Scripts\k6.exe run --summary-export=loadtest/results/local-summary.json loadtest/script.js
+backend\.venv\Scripts\k6.exe run -e BASE_URL=http://127.0.0.1:8000 --summary-export=loadtest/results/local-summary.json loadtest/script.js
 ```
 
 ---
@@ -80,7 +80,17 @@ backend\.venv\Scripts\k6.exe run --summary-export=loadtest/results/local-summary
 
 Verifies single-node throughput and demonstrates that CPU target tracking alarm triggers when capacity is capped:
 
-1. **Set ASG MaxSize to 1**:
+1. **Set MaxSize to 1 via CloudFormation**:
+   ```sh
+   aws cloudformation deploy \
+     --template-file infra/02-app.yaml \
+     --stack-name cloudnotes-app \
+     --capabilities CAPABILITY_NAMED_IAM \
+     --region ap-southeast-2 \
+     --parameter-overrides MaxSize=1
+   ```
+
+   *(Alternative direct Auto Scaling CLI command:)*
    ```sh
    aws autoscaling update-auto-scaling-group \
      --auto-scaling-group-name cloudnotes-asg \
@@ -91,7 +101,7 @@ Verifies single-node throughput and demonstrates that CPU target tracking alarm 
 2. **Execute k6 Load Test**:
    ```sh
    backend\.venv\Scripts\k6.exe run \
-     -e TARGET_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com \
+     -e BASE_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com \
      --summary-export=loadtest/results/run-a-summary.json \
      loadtest/script.js
    ```
@@ -107,7 +117,17 @@ Verifies single-node throughput and demonstrates that CPU target tracking alarm 
 
 Proves automated scale-out under identical load conditions:
 
-1. **Set ASG MaxSize to 2**:
+1. **Set MaxSize to 2 via CloudFormation**:
+   ```sh
+   aws cloudformation deploy \
+     --template-file infra/02-app.yaml \
+     --stack-name cloudnotes-app \
+     --capabilities CAPABILITY_NAMED_IAM \
+     --region ap-southeast-2 \
+     --parameter-overrides MaxSize=2
+   ```
+
+   *(Alternative direct Auto Scaling CLI command:)*
    ```sh
    aws autoscaling update-auto-scaling-group \
      --auto-scaling-group-name cloudnotes-asg \
@@ -118,7 +138,7 @@ Proves automated scale-out under identical load conditions:
 2. **Execute k6 Load Test**:
    ```sh
    backend\.venv\Scripts\k6.exe run \
-     -e TARGET_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com \
+     -e BASE_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com \
      --summary-export=loadtest/results/run-b-summary.json \
      loadtest/script.js
    ```

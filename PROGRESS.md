@@ -483,7 +483,7 @@ docker compose up --build
       - `storage_ok`: `true`
   - Marked **Stage 10 fully complete**.
 
-- **Stage 11: Load Testing Setup & Local Verification (In Progress)**:
+- **Stage 11: Load Testing Setup & Local Verification (Completed)**:
   - **k6 Load Testing Script** (`loadtest/script.js`):
     - Configured with the exact 8 workload operations from the project guide:
       1. `POST /api/auth/demo` (Demo authentication & session cookie)
@@ -495,32 +495,39 @@ docker compose up --build
       7. `GET /api/status` (Operational status endpoint check)
       8. `GET /api/health` (Lightweight public ALB health check)
     - Enforced `X-Requested-With: cloudnotes` (CSRF guard) and `Content-Type: application/json`.
+    - Corrected configuration to read `BASE_URL` directly from `__ENV.BASE_URL` (defaulting to `http://127.0.0.1:8000`), adhering strictly to the Stage 11 guide.
     - Pacing includes 1s think time between user iterations.
     - Workload stages: 1m ramp to 10 VUs, 2m ramp to 40 VUs, 5m plateau at 40 VUs, 1m ramp down to 0 VUs (total 9 minutes).
     - Thresholds: `http_req_failed < 0.01` (< 1% error rate) and `http_req_duration p(95) < 800ms`.
   - **Documentation** (`loadtest/README.md`):
-    - Documented workload architecture, stages, thresholds, local test commands, and exact Run A (MaxSize=1) and Run B (MaxSize=2) AWS execution steps.
+    - Updated documentation to use `BASE_URL` consistently across all local and AWS execution commands.
+    - Documented CloudFormation deployment commands (`aws cloudformation deploy --template-file infra/02-app.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-2 --parameter-overrides MaxSize=1` for Run A and `MaxSize=2` for Run B) alongside direct Auto Scaling CLI shortcuts.
   - **Tool Installation**:
     - Installed official standalone `k6` v2.3.0 binary at `backend/.venv/Scripts/k6.exe`.
   - **Local Verification Against localhost:8000**:
-    - Executed local load test with multi-threaded Flask server and JSON export (`loadtest/results/local-summary.json`).
-    - **Results**:
+    - Preserved full 9-minute local benchmark results in `loadtest/results/local-summary.json`:
       - Total HTTP requests: 1,192
       - Checks succeeded: 2,086 / 2,086 (100.00%)
       - Failed requests rate: 0.00% (Threshold: < 1.00%)
       - p95 response time: 178.74 ms (Threshold: < 800 ms)
       - All 8 scenario groups passed cleanly.
+    - Re-verified test execution with `BASE_URL` configuration: all thresholds passed (`p(95) < 800ms`, `http_req_failed < 0.01`).
+    - All 207 backend unit/integration tests verified passing.
 
 ## Next
 
 - **Awaiting User Approval for AWS Load Testing**:
   - **Run A (MaxSize=1 Baseline)**:
-    - Command: `aws autoscaling update-auto-scaling-group --auto-scaling-group-name cloudnotes-asg --max-size 1 --region ap-southeast-2`
-    - Run: `backend\.venv\Scripts\k6.exe run -e TARGET_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com --summary-export=loadtest/results/run-a-summary.json loadtest/script.js`
+    - Update CloudFormation stack:
+      `aws cloudformation deploy --template-file infra/02-app.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-2 --parameter-overrides MaxSize=1`
+    - Execute k6:
+      `backend\.venv\Scripts\k6.exe run -e BASE_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com --summary-export=loadtest/results/run-a-summary.json loadtest/script.js`
     - Capture single-node performance and CloudWatch metrics.
   - **Run B (MaxSize=2 Auto-Scaling)**:
-    - Command: `aws autoscaling update-auto-scaling-group --auto-scaling-group-name cloudnotes-asg --max-size 2 --region ap-southeast-2`
-    - Run: `backend\.venv\Scripts\k6.exe run -e TARGET_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com --summary-export=loadtest/results/run-b-summary.json loadtest/script.js`
+    - Update CloudFormation stack:
+      `aws cloudformation deploy --template-file infra/02-app.yaml --stack-name cloudnotes-app --capabilities CAPABILITY_NAMED_IAM --region ap-southeast-2 --parameter-overrides MaxSize=2`
+    - Execute k6:
+      `backend\.venv\Scripts\k6.exe run -e BASE_URL=http://cloudnotes-alb-460732187.ap-southeast-2.elb.amazonaws.com --summary-export=loadtest/results/run-b-summary.json loadtest/script.js`
     - Observe automated scale-out to 2 instances and latency stabilization.
 
 ## Decisions

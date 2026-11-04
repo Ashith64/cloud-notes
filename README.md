@@ -1,43 +1,110 @@
 # Cloud Notes
 
-A polished student notes web app that runs on AWS. Notes are Markdown files (S3 in the cloud, a local folder in development).
-
-## Features
-
-- **Visual Editor**: Notion-style Markdown editor powered by Milkdown Crepe with slash commands, syntax highlighting, task lists, tables, and image/PDF attachments.
-- **Organization**: Notebooks, tags, favorites, archive, and trash with 30-day lazy purge.
-- **Search & Command Palette**: Instant full-text search with match highlighting via `Ctrl+K` / `⌘K`.
-- **System Status**: Public status dashboard reporting live instance telemetry, compute, database and storage health.
-- **Production Container**: Single multi-stage Docker container serving both the Flask API and the compiled React SPA.
-
-## Tech Stack
-
-- **Backend**: Python 3.12, Flask 3, SQLAlchemy 2, PyMySQL, PyJWT, bcrypt, boto3, python-frontmatter, gunicorn, pytest.
-- **Frontend**: React 18, Vite, TypeScript, Tailwind CSS, shadcn/ui, lucide-react, TanStack Query, Zustand, React Router, Sonner, @milkdown/crepe, @fontsource-variable/inter.
-- **Database**: SQLite in local development, MySQL 8 in Docker Compose and on AWS RDS.
-- **Storage**: Local filesystem in development, AWS S3 in production.
+A polished student notes web app built on AWS.  Notes are stored as Markdown
+files — in S3 in the cloud, in a local folder during development.  The goal is
+a tool that feels like a real product: calm, fast, and reliable.
 
 ---
 
-## Run Locally
+## Screenshots
+
+| Login | Workspace (light) | Workspace (dark) |
+|-------|------------------|-----------------|
+| ![Login page](docs/screenshots/stage10-01-login.png) | ![Workspace light](docs/screenshots/stage10-02-demo-workspace.png) | ![Workspace dark](docs/screenshots/stage10-06-dark-mode.png) |
+
+| Note editor with attachments | Command palette search | System Status |
+|------------------------------|----------------------|---------------|
+| ![Editor with image](docs/screenshots/stage10-04-image-uploaded.png) | ![Search palette](docs/screenshots/stage10-05-search.png) | ![System status](docs/screenshots/stage10-07-system-status.png) |
+
+---
+
+## Features
+
+- **Visual Markdown Editor** — Notion-style editor powered by Milkdown Crepe:
+  slash menu, floating toolbar, headings, lists, task lists, code blocks,
+  tables, inline and block images.
+- **Autosave** — 800 ms debounce with "Saving…" / "Saved just now" feedback and
+  retry with exponential back-off on network failure.
+- **Notebooks, Tags, Pin, Favorite, Archive** — Full note organisation with
+  live sidebar counts and context menus.
+- **Search & Command Palette** — Instant full-text search box plus `Ctrl/Cmd+K`
+  command palette with live highlighted results.
+- **Trash & Restore** — 30-day retention with lazy purge, 6-second undo toast,
+  and manual "Empty trash".
+- **Image & PDF Attachments** — Drag, drop or paste; magic-byte file type
+  validation; private S3 storage; presigned URL retrieval.
+- **Export** — Single note as `.md` or everything as a `.zip` with an
+  `attachments/` folder.
+- **Dark Mode** — Follows system preference, with a toggle in the top bar.
+- **Responsive Layout** — Three panes on desktop (≥1024 px), slide-in drawer
+  at tablet (640–1023 px), single pane with back arrow and floating `+` on mobile.
+- **System Status Page** — Public dashboard with live instance ID, AZ, running
+  server count, average CPU, database and storage health, last automated backup.
+- **Demo Account** — "Try demo account" button seeds 12 realistic student notes
+  instantly — no sign-up required.
+
+---
+
+## Technology Stack
+
+| Layer | Technologies |
+|-------|-------------|
+| **Backend** | Python 3.12, Flask 3, SQLAlchemy 2, PyMySQL, PyJWT, bcrypt, boto3, python-frontmatter, gunicorn, pytest |
+| **Frontend** | React 18, Vite, TypeScript (strict), Tailwind CSS, shadcn/ui, lucide-react, TanStack Query, Zustand, React Router, Sonner, @milkdown/crepe, @fontsource-variable/inter |
+| **Database** | SQLite in local dev · MySQL 8 in Docker Compose and on AWS RDS |
+| **Storage** | Local filesystem in dev · AWS S3 in production |
+| **Container** | Multi-stage Docker (Node 20 builds frontend, Python 3.12-slim runs gunicorn) |
+| **Infrastructure** | AWS CloudFormation, ALB, Auto Scaling Group, ECR, RDS, S3, IAM, CloudWatch, SNS |
+
+---
+
+## Architecture
+
+```
+Browser (React SPA)
+  │  HTTP port 80
+  ▼
+Application Load Balancer   ← health check: /api/health
+  │
+  ▼
+Auto Scaling Group: 1–2 × EC2 t3.micro (public subnets)
+  each runs ONE Docker container: Flask API + compiled React, via gunicorn (port 8000)
+  │               │                      │
+  ▼               ▼                      ▼
+RDS MySQL 8   S3 Bucket             CloudWatch Logs, Metrics,
+(private)     (private, versioned,   Alarms → SNS email
+              AES-256 encrypted):
+              note .md files
+              + attachments
+
+Supporting: VPC, Security Groups, IAM instance role (no static keys),
+            SSM Parameter Store (db password, JWT secret), ECR (Docker images),
+            CloudFormation (two stacks: 01-foundation.yaml + 02-app.yaml)
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full Mermaid diagram,
+request flow walkthrough, and per-service reference.
+
+---
+
+## Local Development
 
 ### Prerequisites
 
 - Python 3.12+
 - Node.js 20+ and npm
 
-### 1. Backend Setup
+### 1. Backend
 
 ```bash
 cd backend
 
-# Create virtual environment (if not already created)
+# Create and activate virtual environment
 python -m venv .venv
 
-# Activate virtual environment
-# Windows:
+# Windows
 .venv\Scripts\activate
-# Linux/macOS:
+# Linux / macOS
 source .venv/bin/activate
 
 # Install dependencies
@@ -45,15 +112,16 @@ pip install -r requirements.txt
 
 # Configure environment
 cp ../.env.example ../.env
+# Edit .env if needed (defaults work for local dev)
 
-# Initialise database and seed demo data
+# Initialise the SQLite database
 flask init-db
 
-# Run development server (port 8000)
+# Run the development server on port 8000
 python wsgi.py
 ```
 
-### 2. Frontend Setup
+### 2. Frontend
 
 ```bash
 cd frontend
@@ -61,180 +129,254 @@ cd frontend
 # Install dependencies
 npm ci
 
-# Start development dev server (proxies /api to localhost:8000)
+# Start Vite dev server on port 5173 (proxies /api → localhost:8000)
 npm run dev
-
-# Or compile production bundle
-npm run build
 ```
 
-The frontend dev server runs at `http://localhost:5173`. When built with `npm run build`, Flask automatically serves the production SPA from `http://localhost:8000`.
+The frontend dev server is at `http://localhost:5173`.
+
+Alternatively, build a production bundle and serve everything from Flask:
+
+```bash
+cd frontend && npm run build
+# Flask at http://localhost:8000 serves both API and SPA
+```
 
 ### 3. Run Backend Tests
 
 ```bash
 cd backend
-.venv\Scripts\pytest.exe tests/ -v
+.venv\Scripts\pytest.exe tests/ -v     # Windows
+# or
+.venv/bin/pytest tests/ -v              # Linux / macOS
 ```
 
-To run tests against a MySQL database:
-
-```bash
-# Set TEST_DATABASE_URL environment variable
-$env:TEST_DATABASE_URL="mysql+pymysql://cloudnotes:cloudnotes_secret@127.0.0.1:3306/cloudnotes?charset=utf8mb4"
-.venv\Scripts\pytest.exe tests/ -v
-```
+207 tests across auth, notes, notebooks, tags, attachments, export, status,
+storage, and infrastructure template validation — all passing.
 
 ---
 
-## Run with Docker
+## Docker Compose (Local Production Stack)
 
-Cloud Notes packages the Flask API and the built React frontend into a single production Docker container.
+Packages the Flask API and compiled React frontend into a single container,
+backed by a real MySQL 8 database.
 
 ### Prerequisites
 
 - Docker Engine / Docker Desktop (with Compose V2)
 
-### 1. Build and Start Services
-
-From the project root:
+### Start
 
 ```bash
 docker compose up --build
 ```
 
 This starts:
-1. `mysql`: MySQL 8 with persistent volume `mysql_data` and healthcheck.
-2. `app`: Multi-stage build (Node 20 builds frontend, Python 3.12-slim runs gunicorn with 2 workers and 4 threads). Wait script retries `flask init-db` until MySQL is healthy before starting Gunicorn.
+1. `mysql` — MySQL 8 with healthcheck and persistent `mysql_data` volume.
+2. `app` — Multi-stage build (Node 20 builds frontend, Python 3.12-slim runs
+   gunicorn).  The entrypoint script retries `flask init-db` with exponential
+   back-off until MySQL is ready.
 
-### 2. Access the Application
+Access the app at **http://localhost:8000** · Click **"Try demo account"** to log in with pre-seeded notes.
 
-- **Web App**: Open [http://localhost:8000](http://localhost:8000) in your browser.
-  - Click **"Try demo account"** to log in immediately with pre-seeded student notes.
-- **Health Check**: [http://localhost:8000/api/health](http://localhost:8000/api/health)
-- **Status Dashboard**: [http://localhost:8000/status](http://localhost:8000/status)
-
-### 3. Stop Containers
+### Stop
 
 ```bash
-docker compose down
+docker compose down          # stop containers, keep volumes
+docker compose down -v       # stop containers and delete volumes (clean reset)
 ```
-
-Data in `mysql_data` and `app_storage` volumes persists across restarts. To perform a clean reset:
-
-```bash
-docker compose down -v
-```
-
 
 ---
 
-## Deploy to AWS
+## AWS Deployment
 
-Cloud Notes deploys on AWS using a single CloudFormation stack (`infra/stack.yaml`) that provisions every resource: ECR, S3, RDS MySQL, Secrets Manager, ALB, Auto Scaling Group, and CloudWatch monitoring. The deployment has three ordered steps.
+Cloud Notes deploys to **ap-southeast-2 (Sydney)** using two CloudFormation
+stacks.  The two-stack design keeps cheap permanent resources (VPC, S3, ECR)
+in a foundation stack and billable resources (RDS, EC2, ALB) in an application
+stack that can be torn down without destroying the foundation.
 
 ### Prerequisites
 
 | Tool | Version | Notes |
-| :--- | :--- | :--- |
-| AWS CLI v2 | ≥ 2.13 | `aws configure` with region `ap-south-1` |
-| Docker Engine / Docker Desktop | ≥ 24 | Required for `--platform linux/amd64` cross-builds |
+|------|---------|-------|
+| AWS CLI v2 | ≥ 2.13 | Configured with `ap-southeast-2` as default region |
+| Docker Engine | ≥ 24 | Required for `--platform linux/amd64` cross-builds |
 | Git | Any | Used to tag the image with the current commit hash |
 
-### Deployment Order
+### Step 1 — Foundation Stack
 
-> [!IMPORTANT]
-> The three steps below **must** be run in order. The ECR repository does not exist until the CloudFormation stack is deployed (Step 1), so the image cannot be pushed (Step 2) before that.
-
-#### Step 1 — Deploy the CloudFormation Stack
-
-This creates all AWS infrastructure: VPC security groups, RDS MySQL, ECR repository, S3 bucket, IAM roles, ALB, Auto Scaling Group, and CloudWatch alarms. It takes approximately 10–15 minutes, mostly waiting for RDS.
+Creates VPC, subnets, security groups, S3 bucket, ECR repository, and SNS topic.
 
 ```bash
 aws cloudformation deploy \
-    --template-file infra/stack.yaml \
-    --stack-name cloudnotes-app \
+    --template-file infra/01-foundation.yaml \
+    --stack-name cloudnotes-foundation \
     --capabilities CAPABILITY_IAM \
-    --region ap-south-1 \
+    --region ap-southeast-2 \
     --parameter-overrides \
-        VpcId=<your-vpc-id> \
-        SubnetIds=<subnet-1>,<subnet-2> \
-        AlertEmail=<your-email@example.com> \
-        MinCapacity=1 \
+        AlertEmail=your-email@example.com
+```
+
+### Step 2 — Create Secrets
+
+Store the database password and JWT secret in SSM Parameter Store:
+
+```powershell
+# Windows PowerShell
+.\scripts\create-secrets.ps1
+```
+
+```bash
+# Linux / macOS / WSL
+bash scripts/create-secrets.sh
+```
+
+### Step 3 — Build and Push the Docker Image
+
+```powershell
+# Windows PowerShell
+.\scripts\push-image.ps1
+```
+
+```bash
+# Linux / macOS / WSL
+bash scripts/push-image.sh
+```
+
+The script: authenticates to ECR via instance role, builds with
+`--platform linux/amd64`, tags with git commit hash and `latest`, pushes both.
+
+### Step 4 — Application Stack
+
+Creates RDS, IAM role, EC2 Launch Template, ALB, Auto Scaling Group, and CloudWatch.
+
+```bash
+aws cloudformation deploy \
+    --template-file infra/02-app.yaml \
+    --stack-name cloudnotes-app \
+    --capabilities CAPABILITY_NAMED_IAM \
+    --region ap-southeast-2 \
+    --parameter-overrides \
+        MinSize=1 \
         DesiredCapacity=1
 ```
 
-> The template's default `DesiredCapacity` and `MinCapacity` are both `0` (safe for validation). Set them to `1` at deploy time to start the first EC2 instance.
-
-After deployment, retrieve the `LoadBalancerUrl` output:
+After ~10–15 minutes (mostly waiting for RDS), retrieve the ALB URL:
 
 ```bash
 aws cloudformation describe-stacks \
     --stack-name cloudnotes-app \
-    --region ap-south-1 \
+    --region ap-southeast-2 \
     --query "Stacks[0].Outputs[?OutputKey=='LoadBalancerUrl'].OutputValue" \
     --output text
 ```
 
-#### Step 2 — Build and Push the Docker Image
-
-Run the provided script from the project root. It handles ECR login, build, tagging, and push automatically.
-
-**PowerShell (Windows):**
-```powershell
-.\scripts\push-image.ps1
-```
-
-**Bash (Linux / macOS / WSL):**
-```bash
-bash scripts/push-image.sh
-```
-
-The script:
-1. Checks that `git`, `docker`, and `aws` are on `PATH`.
-2. Calls `aws sts get-caller-identity` to obtain the AWS account ID dynamically — no hard-coded values.
-3. Calls `aws cloudformation describe-stacks` to read the `EcrRepositoryUri` output — no hard-coded repository paths.
-4. Authenticates Docker to ECR via `aws ecr get-login-password | docker login --username AWS --password-stdin ...` — the ECR token is piped and never printed.
-5. Builds with `--platform linux/amd64` (matching the `t3.micro` x86_64 EC2 instance type).
-6. Tags the image with the short Git commit hash **and** `latest`, then pushes both tags.
-7. Prints only the resulting image URIs, never credentials.
-
-Verify the image was pushed:
-```bash
-aws ecr describe-images \
-    --repository-name cloudnotes-repo \
-    --region ap-south-1
-```
-
-#### Step 3 — Trigger a Rolling Instance Refresh
-
-If the stack was already deployed with `DesiredCapacity=1`, the Auto Scaling Group will automatically pull the `:latest` image on the next instance launch. To force an immediate refresh:
-
-```bash
-aws autoscaling start-instance-refresh \
-    --auto-scaling-group-name cloudnotes-asg \
-    --region ap-south-1
-```
-
-### Secret Management
-
-> [!NOTE]
-> Cloud Notes does **not** use SSM Parameter Store for runtime secrets. SSM parameters (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`) from the original tutorial guide are **not needed** — our architecture uses AWS Secrets Manager exclusively:
->
-> - **Database credentials**: Generated and rotated automatically by RDS (`ManageMasterUserPassword: true`). Passed to the container as `DB_SECRET_ARN` so `backend/app/config.py` can fetch them at startup via the EC2 instance role.
-> - **Application `SECRET_KEY`**: A 64-character random string generated at stack creation time by `AWS::SecretsManager::Secret` (`AppSecret`). Passed as `APP_SECRET_ARN`. Never appears in template outputs, logs, or Git.
->
-> Both secrets are scoped to the instance role's `secretsmanager:GetSecretValue` policy and are never echoed to the terminal or stored in files.
-
 ### Teardown
 
 ```bash
-# Delete the CloudFormation stack (RDS, ALB, ASG, ECR are removed automatically)
+# Delete the application stack (RDS, ALB, ASG removed automatically)
 aws cloudformation delete-stack \
     --stack-name cloudnotes-app \
-    --region ap-south-1
+    --region ap-southeast-2
 
-# The S3 bucket has DeletionPolicy: Retain — empty it manually first if needed:
-aws s3 rm s3://cloudnotes-storage-<account-id> --recursive
-aws s3 rb s3://cloudnotes-storage-<account-id> --force
+# Empty the S3 bucket first (DeletionPolicy: Retain prevents auto-delete)
+aws s3 rm s3://cloudnotes-<account-id>-ap-southeast-2 --recursive
+aws s3 rb s3://cloudnotes-<account-id>-ap-southeast-2 --force
+
+# Then delete the foundation stack
+aws cloudformation delete-stack \
+    --stack-name cloudnotes-foundation \
+    --region ap-southeast-2
 ```
+
+---
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full AWS architecture diagram, request flow, component reference |
+| [docs/SECURITY.md](docs/SECURITY.md) | bcrypt, JWT, CSRF, IAM, security groups, S3 access control |
+| [docs/COST.md](docs/COST.md) | AWS service costs in ap-southeast-2, monthly estimate |
+| [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | HTTP-only, single-AZ, single-region, known limitations |
+| [docs/VIVA.md](docs/VIVA.md) | Viva preparation — architecture, scaling, storage, security Q&A |
+| [docs/SPEC.md](docs/SPEC.md) | Full product specification and data model |
+| [infra/README.md](infra/README.md) | CloudFormation template guide and deployment commands |
+| [loadtest/README.md](loadtest/README.md) | k6 load test setup and execution instructions |
+
+---
+
+## Credentials and Secrets
+
+> [!IMPORTANT]
+> Cloud Notes does **not** hard-code secrets anywhere.
+>
+> - **Local dev**: copy `.env.example` → `.env` and edit.  `.env` is git-ignored.
+> - **Docker Compose**: secrets come from the `.env` file.
+> - **AWS**: database password and JWT secret are stored in **SSM Parameter Store**
+>   as `SecureString` values (`/cloudnotes/db-password`, `/cloudnotes/jwt-secret`).
+>   They are retrieved by the EC2 instance at boot time using the IAM instance role.
+>   They are never printed in logs, stored in files, or echoed to the terminal.
+
+---
+
+## Project Structure
+
+```
+cloud-note-taking-app/
+├── backend/
+│   ├── app/
+│   │   ├── routes/        # auth, notes, notebooks, tags, attachments, export, status
+│   │   ├── storage/       # local.py, s3.py, factory.py (storage abstraction)
+│   │   ├── config.py      # environment + Secrets Manager integration
+│   │   ├── models.py      # SQLAlchemy models
+│   │   ├── utils.py       # markdown strip, snippet generation
+│   │   └── scripts/       # seed_demo.py
+│   ├── tests/             # 207 pytest tests
+│   ├── requirements.txt
+│   └── wsgi.py
+├── frontend/
+│   └── src/
+│       ├── pages/         # LoginPage, WorkspacePage, SettingsPage, StatusPage
+│       ├── components/    # Editor, NoteList, Sidebar, CommandPalette, …
+│       ├── stores/        # Zustand state stores
+│       └── lib/           # API client, query hooks
+├── infra/
+│   ├── 01-foundation.yaml # VPC, S3, ECR, SNS, Security Groups
+│   └── 02-app.yaml        # RDS, IAM, ALB, ASG, CloudWatch
+├── scripts/
+│   ├── create-secrets.ps1 / .sh   # SSM SecureString parameter creation
+│   └── push-image.ps1 / .sh       # ECR image build and push
+├── loadtest/
+│   ├── script.js          # k6 load test (8 operations, 40 VUs, 9 min)
+│   └── results/           # local-summary.json
+├── docs/
+│   ├── SPEC.md
+│   ├── ARCHITECTURE.md
+│   ├── SECURITY.md
+│   ├── COST.md
+│   ├── LIMITATIONS.md
+│   ├── VIVA.md
+│   └── screenshots/
+├── Dockerfile             # multi-stage: Node 20 build + Python 3.12-slim run
+├── docker-compose.yml     # mysql:8 + app container
+├── docker-entrypoint.sh   # retry loop for flask init-db + gunicorn launch
+├── .env.example
+└── PROGRESS.md
+```
+
+---
+
+## Credits
+
+Built as a cloud computing student project.
+
+**Backend libraries**: Flask, SQLAlchemy, PyMySQL, PyJWT, bcrypt, boto3,
+python-frontmatter, gunicorn, pytest.
+
+**Frontend libraries**: React, Vite, TypeScript, Tailwind CSS, shadcn/ui,
+lucide-react, TanStack Query, Zustand, React Router, Sonner, Milkdown Crepe,
+@fontsource-variable/inter.
+
+All libraries used under their respective open-source licenses (MIT, Apache 2.0,
+BSD, etc.).  See each package's license file for details.

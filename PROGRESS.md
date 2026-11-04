@@ -514,6 +514,38 @@ docker compose up --build
     - Re-verified test execution with `BASE_URL` configuration: all thresholds passed (`p(95) < 800ms`, `http_req_failed < 0.01`).
     - All 207 backend unit/integration tests verified passing.
 
+- **Stage 12: Documentation (Completed)**:
+  - Created `docs/ARCHITECTURE.md`:
+    - Full AWS Mermaid architecture diagram showing VPC, ALB, ASG, EC2, RDS, S3, ECR, IAM, CloudWatch, SNS, SSM, CloudFormation.
+    - Three request flow walkthroughs: typical API request, note save (two-place write), attachment download (presigned URL), and SPA fallback.
+    - Per-component reference table covering VPC subnets, EC2 Launch Template, Docker/ECR, ALB settings, Auto Scaling Group (CPU target tracking at 50%, rolling update policy), RDS, S3, IAM role (6 permission statements), CloudWatch (logs, dashboard, 4 alarms), and two-stack CloudFormation design.
+  - Created `docs/SECURITY.md`:
+    - bcrypt password hashing and account lockout (5 failures → 10 min).
+    - JWT httpOnly SameSite=Lax cookie with CSRF header enforcement (`X-Requested-With: cloudnotes`).
+    - User data isolation (every query scoped to `g.current_user.id`; S3 per-user path prefix).
+    - Private S3 bucket (all public access blocked, AES-256, versioning, bucket policy denying non-TLS requests).
+    - IAM least-privilege inline policy (6 statements; no static access keys).
+    - Security group inbound chain (internet → AlbSg → AppSg → DbSg) and IMDSv2 enforcement.
+  - Created `docs/COST.md`:
+    - AWS pricing for ap-southeast-2: EC2 t3.micro, RDS db.t3.micro, ALB, S3, ECR, SSM, CloudWatch, SNS.
+    - Monthly estimate: ~\$49–50 USD at 1 instance, ~\$60–62 at peak.
+    - Items marked TO VERIFY where pricing could not be confirmed from official pages.
+    - Cost reduction options section (not implemented).
+  - Created `docs/LIMITATIONS.md`:
+    - HTTP only (no TLS/HTTPS), single-AZ RDS, EC2 in public subnets, single region, no auto image refresh, local-only load test results, no version history (Could-tier), SQLite vs MySQL differences, no real-time sync, cookie Secure flag absent.
+    - Each limitation includes a "why" and a "production upgrade" path.
+  - Created `docs/VIVA.md`:
+    - Five sections matching Part H of the project guide: Architecture, Request Flow, Scaling, Storage, Security.
+    - 20 Q&A pairs covering every component, design decision, and security mechanism using plain language and actual project values.
+    - Quick reference table of key numbers (instance type, ASG limits, JWT expiry, test counts, load test results, etc.).
+  - Updated `README.md`:
+    - Screenshot gallery (stage10 live AWS screenshots).
+    - Feature list, tech stack table, ASCII architecture overview.
+    - Local development, Docker Compose, and AWS deployment instructions (two-stack).
+    - Project structure tree.
+    - Documentation links table.
+    - Credits section.
+
 ## Next
 
 - **Awaiting User Approval for AWS Load Testing**:
